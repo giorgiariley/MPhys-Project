@@ -154,7 +154,7 @@ def calculate_muv(w_rest: np.ndarray, f_rest_flambda: np.ndarray, z: float,
     return M_UV_AB
 
 # ----------------------------------------------------------------------
-## BETA CALCULATION FUNCTIONS (ADAPTED for C94)
+## BETA CALCULATION FUNCTIONS (Reused)
 # ----------------------------------------------------------------------
 
 def beta_slope_power_law_func(log_w, log_a, beta):
@@ -227,7 +227,7 @@ def calculate_beta(w_rest: np.ndarray, f_rest_flambda: np.ndarray) -> Optional[f
 
 def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
     """
-    Main function to calculate MUV/Beta and plot Beta vs z for all prism spectra.
+    Main function to calculate MUV/Beta, plot results, and save data.
     """
     os.makedirs(output_dir, exist_ok=True)
     fits_files = find_prism_fits(base_dir)
@@ -270,7 +270,28 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
 
     df_data = pd.DataFrame(muv_beta_data)
     
-    # 1. Plot M_UV vs. z 
+    # --------------------------------------
+    # 1. Plot Beta vs. M_UV (NEW FINAL PLOT)
+    # --------------------------------------
+    plt.figure(figsize=(10, 7))
+    plt.scatter(df_data['muv'], df_data['beta'], 
+                s=30, alpha=0.7, edgecolors='k', color='darkgreen')
+    
+    # M_UV is on the x-axis, and we invert the x-axis as is standard for magnitude plots
+    plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
+    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
+    plt.title(f"UV Slope (Beta) vs. M_UV (N={len(df_data)})", fontsize=16)
+    
+    plt.gca().invert_xaxis() # Brighter objects (more negative MUV) should be to the left
+    plt.ylim(-3.0, 1.0) # Standard Beta range
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    
+    plot_path_beta_muv = output_dir / "beta_vs_muv_plot.png"
+    plt.savefig(plot_path_beta_muv, dpi=200)
+    print(f"\nSaved Beta vs M_UV plot successfully to: {plot_path_beta_muv.resolve()}")
+    
+    # 2. Plot M_UV vs. z (Reused)
     plt.figure(figsize=(10, 7))
     plt.scatter(df_data['z'], df_data['muv'], 
                 s=30, alpha=0.7, edgecolors='k', color='dodgerblue')
@@ -281,11 +302,9 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.grid(alpha=0.3)
     plt.tight_layout()
     plt.savefig(output_dir / "muv_vs_z_plot_filtered_final.png", dpi=200)
-    print(f"\nSaved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_filtered_final.png').resolve()}")
+    print(f"Saved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_filtered_final.png').resolve()}")
 
-    # --------------------------------------
-    # 2. Plot Beta vs. z (NEW)
-    # --------------------------------------
+    # 3. Plot Beta vs. z (Reused)
     plt.figure(figsize=(10, 7))
     plt.scatter(df_data['z'], df_data['beta'], 
                 s=30, alpha=0.7, edgecolors='k', color='firebrick')
@@ -294,7 +313,6 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
     plt.title(f"UV Slope (Beta) vs. Redshift (N={len(df_data)})", fontsize=16)
     
-    # Standard limits for Beta
     plt.ylim(-3.0, 1.0) 
     plt.grid(alpha=0.3)
     plt.tight_layout()
@@ -303,7 +321,7 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.savefig(plot_path_beta, dpi=200)
     print(f"Saved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
     
-    # Also save the MUV & Beta results to a single CSV
+    # Save the final combined data
     csv_path_out = output_dir / "muv_beta_z_results.csv"
     df_data.to_csv(csv_path_out, index=False)
     print(f"MUV and Beta results saved to: {csv_path_out.resolve()}")
