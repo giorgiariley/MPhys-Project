@@ -9,6 +9,7 @@ import pandas as pd
 import astropy.units as au
 from astropy.cosmology import Planck18
 from scipy.integrate import simpson
+from scipy.optimize import curve_fit
 
 # --- CONSTANTS ---
 C_LIGHT_AA_PER_S = 2.99792458e18 
@@ -17,34 +18,32 @@ W_UV_MIN = 1350.0
 W_UV_MAX = 1800.0
 cosmo = Planck18
 
+# --- BETA CALCULATION CONSTANTS (Calzetti+1994 Filter Definitions) ---
+# Use the explicit C94 filter boundaries provided by the user. These are REST-FRAME wavelengths.
+LOWER_C94_FILT = np.array([1268., 1309., 1342., 1407., 1562., 1677., 1760., 1866., 1930., 2400.])
+UPPER_C94_FILT = np.array([1284., 1316., 1371., 1515., 1583., 1740., 1833., 1890., 1950., 2580.])
+
 # --- CONFIGURATION ---
 SPECTRA_BASE_DIR = "/raid/scratch/work/Griley/GALFIND_WORK/Spectra/2D"
 CSV_PATH_GLOBAL = Path("./mphys_GOODS_S_exposures.csv")
 OUTPUT_DIR = Path.cwd() / "MUV_plots"
-# Path to the external SNR file for filtering (implicitly SNR >= 5.0)
 EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/specFitMSA/src/uv_snr_5plus.csv") 
 
 # ----------------------------------------------------------------------
-## FILTERING HELPERS (FINAL CORRECTION)
+## FILTERING HELPERS (Reused)
 # ----------------------------------------------------------------------
 
 def get_snr_filter_files(snr_csv_path: Path) -> Set[str]:
     """
     Loads the external SNR CSV and returns a set of filenames present in the file.
-    This assumes the input CSV (uv_snr_5plus.csv) already contains the desired 
-    SNR >= 5.0 sample and no further numerical filtering is needed.
     """
     if not snr_csv_path.exists():
         print(f"Warning: SNR filter file not found at {snr_csv_path}. Proceeding without SNR filter.")
         return None 
         
     try:
-        # Load the CSV, only need the 'file' column
         df_snr = pd.read_csv(snr_csv_path, usecols=['file'])
-        
-        # Extract all unique filenames as a set
         valid_files = set(df_snr['file'].astype(str).values)
-        
         print(f"Loaded {len(valid_files)} filenames from the external CSV. These will be used as the MUV sample (implicit SNR >= 5.0).")
         return valid_files
         
@@ -108,7 +107,7 @@ def get_rest_frame_spectrum(wave_obs_um: np.ndarray, flux_obs_uJy: np.ndarray,
     return w[keep], f[keep], e[keep]
 
 # ----------------------------------------------------------------------
-## MUV CALCULATION (Fixes numpy.log11 typo)
+## MUV CALCULATION (Reused)
 # ----------------------------------------------------------------------
 
 def calculate_muv(w_rest: np.ndarray, f_rest_flambda: np.ndarray, z: float, 
@@ -147,7 +146,6 @@ def calculate_muv(w_rest: np.ndarray, f_rest_flambda: np.ndarray, z: float,
     m_UV_AB = -2.5 * np.log10(F_nu_Jy) + AB_MAG_ZP_JY 
     
     dL_pc = cosmo.luminosity_distance(z).to(au.pc).value
-    # FIX: Corrected typo from np.log11 to np.log10
     DM = 5.0 * (np.log10(dL_pc) - 1.0) 
     K = -2.5 * np.log10(1 + z)
     
@@ -156,32 +154,93 @@ def calculate_muv(w_rest: np.ndarray, f_rest_flambda: np.ndarray, z: float,
     return M_UV_AB
 
 # ----------------------------------------------------------------------
+## BETA CALCULATION FUNCTIONS (ADAPTED for C94)
+# ----------------------------------------------------------------------
+
+def beta_slope_power_law_func(log_w, log_a, beta):
+    """Log-linear form for power law fit: log(F_lambda) = log(a) + beta * log(lambda)."""
+    return log_a + beta * log_w
+
+def sample_spectrum_C94(w_rest: np.ndarray, f_rest: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Samples the median F_lambda within the 10 standard C94 rest-frame UV filters.
+    """
+    sampled_waves = []
+    sampled_fluxes = []
+
+    # Iterate through the 10 C94 filters
+    for w_min, w_max in zip(LOWER_C94_FILT, UPPER_C94_FILT):
+        mask = (w_rest >= w_min) & (w_rest <= w_max)
+        
+        if np.sum(mask) == 0:
+            continue
+            
+        f_window = f_rest[mask]
+        
+        # Use median flux for robustness and require positive flux
+        median_flux = np.median(f_window[np.isfinite(f_window) & (f_window > 0)])
+        
+        if median_flux > 0:
+            # Use the average wavelength of the bandpass as the sampling point
+            sampled_waves.append((w_min + w_max) / 2.0)
+            sampled_fluxes.append(median_flux)
+
+    return np.array(sampled_waves), np.array(sampled_fluxes)
+
+
+def calculate_beta(w_rest: np.ndarray, f_rest_flambda: np.ndarray) -> Optional[float]:
+    """
+    Calculates the UV continuum slope (beta) by fitting a power law to fluxes 
+    sampled in the C94 filter bands.
+    """
+    # 1. Sample the spectrum using the C94 filter windows
+    sampled_waves, sampled_fluxes = sample_spectrum_C94(w_rest, f_rest_flambda)
+
+    # 2. Check for sufficient data points
+    if len(sampled_waves) < 2:
+        return None
+
+    # 3. Perform the log-linear fit: log(F_lambda) = log(a) + beta * log(lambda)
+    try:
+        popt, pcov = curve_fit(
+            beta_slope_power_law_func, 
+            np.log10(sampled_waves), 
+            np.log10(sampled_fluxes),
+            p0=[0, -2.0], # Initial guess for [log(a), beta]
+            maxfev=5000
+        )
+        
+        # The second parameter is beta
+        beta = popt[1]
+        
+        if np.isfinite(beta):
+             return beta
+        else:
+            return None
+
+    except Exception:
+        return None # Fit failed due to singular matrix, extreme values, etc.
+
+# ----------------------------------------------------------------------
 ## MAIN EXECUTION AND PLOTTING
 # ----------------------------------------------------------------------
 
-def process_and_plot_muv_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
+def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
     """
-    Main function to calculate MUV and plot MUV vs z for all prism spectra, 
-    filtered to include only file names found in the external CSV.
+    Main function to calculate MUV/Beta and plot Beta vs z for all prism spectra.
     """
     os.makedirs(output_dir, exist_ok=True)
     fits_files = find_prism_fits(base_dir)
-    muv_data = []
+    muv_beta_data = [] 
     
-    # Get the set of filenames from the external CSV (no max SNR cut applied)
     valid_snr_files = get_snr_filter_files(snr_filter_path)
-    
     total_files = len(fits_files)
     print(f"Total initial FITS files found: {total_files}")
-    if valid_snr_files is not None:
-         print(f"Processing {len(valid_snr_files)} files from external CSV.")
 
-    # --- Progress Bar Integration ---
     for i, fits_path in enumerate(fits_files):
         file_name = fits_path.name
-        progress = f"{i + 1}/{total_files} galaxy MUV computed"
+        progress = f"{i + 1}/{total_files} computed"
         
-        # Skip if filter is active and file name is NOT in the approved set
         if valid_snr_files is not None and file_name not in valid_snr_files:
             continue
 
@@ -195,48 +254,59 @@ def process_and_plot_muv_vs_z(base_dir: str, csv_path: Path, output_dir: Path, s
             w_rest, f_rest, e_rest = get_rest_frame_spectrum(wave_obs, flux_obs, err_obs, z)
             
             muv = calculate_muv(w_rest, f_rest, z)
+            beta = calculate_beta(w_rest, f_rest)
             
-            if muv is not None and np.isfinite(muv):
-                muv_data.append({'z': z, 'muv': muv, 'file': file_name})
+            if muv is not None and beta is not None and np.isfinite(muv) and np.isfinite(beta):
+                muv_beta_data.append({'z': z, 'muv': muv, 'beta': beta, 'file': file_name})
             
         except Exception as e:
             # print(f"[{progress}] Error processing {fits_path.name}: {e}")
             pass 
 
     # --- Plotting ---
-    if not muv_data:
-        print("\nNo valid MUV data points to plot after filtering. Exiting.")
+    if not muv_beta_data:
+        print("\nNo valid MUV/Beta data points to plot after filtering. Exiting.")
         return
 
-    df_muv = pd.DataFrame(muv_data)
+    df_data = pd.DataFrame(muv_beta_data)
     
+    # 1. Plot M_UV vs. z 
     plt.figure(figsize=(10, 7))
-    plt.scatter(df_muv['z'], df_muv['muv'], 
+    plt.scatter(df_data['z'], df_data['muv'], 
                 s=30, alpha=0.7, edgecolors='k', color='dodgerblue')
-    
     plt.xlabel("Redshift (z)", fontsize=14)
     plt.ylabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14) 
-    plt.title(f"M_UV vs. Redshift (Filtered by CSV) (N={len(df_muv)})", fontsize=16)
-    
+    plt.title(f"M_UV vs. Redshift (N={len(df_data)})", fontsize=16)
     plt.gca().invert_yaxis()
     plt.grid(alpha=0.3)
-    
-    z_min, z_max = df_muv['z'].min(), df_muv['z'].max()
-    plt.xlim(max(0.0, z_min - 0.2), z_max + 0.2)
-    
-    muv_min, muv_max = df_muv['muv'].min(), df_muv['muv'].max()
-    y_buffer = (muv_max - muv_min) * 0.1 
-    plt.ylim(muv_max + y_buffer, muv_min - y_buffer) 
+    plt.tight_layout()
+    plt.savefig(output_dir / "muv_vs_z_plot_filtered_final.png", dpi=200)
+    print(f"\nSaved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_filtered_final.png').resolve()}")
 
+    # --------------------------------------
+    # 2. Plot Beta vs. z (NEW)
+    # --------------------------------------
+    plt.figure(figsize=(10, 7))
+    plt.scatter(df_data['z'], df_data['beta'], 
+                s=30, alpha=0.7, edgecolors='k', color='firebrick')
+    
+    plt.xlabel("Redshift (z)", fontsize=14)
+    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
+    plt.title(f"UV Slope (Beta) vs. Redshift (N={len(df_data)})", fontsize=16)
+    
+    # Standard limits for Beta
+    plt.ylim(-3.0, 1.0) 
+    plt.grid(alpha=0.3)
     plt.tight_layout()
     
-    plot_path = output_dir / "muv_vs_z_plot_filtered_final.png"
-    plt.savefig(plot_path, dpi=200)
-    print(f"\nPlot saved successfully to: {plot_path.resolve()}")
+    plot_path_beta = output_dir / "beta_vs_z_plot.png"
+    plt.savefig(plot_path_beta, dpi=200)
+    print(f"Saved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
     
-    csv_path_out = output_dir / "muv_z_results_filtered_final.csv"
-    df_muv.to_csv(csv_path_out, index=False)
-    print(f"MUV results saved to: {csv_path_out.resolve()}")
+    # Also save the MUV & Beta results to a single CSV
+    csv_path_out = output_dir / "muv_beta_z_results.csv"
+    df_data.to_csv(csv_path_out, index=False)
+    print(f"MUV and Beta results saved to: {csv_path_out.resolve()}")
 
 
 # ----------------------------------------------------------------------
@@ -244,7 +314,7 @@ def process_and_plot_muv_vs_z(base_dir: str, csv_path: Path, output_dir: Path, s
 # ----------------------------------------------------------------------
 
 if __name__ == "__main__":
-    process_and_plot_muv_vs_z(
+    process_and_plot_beta_vs_z(
         SPECTRA_BASE_DIR, 
         CSV_PATH_GLOBAL, 
         OUTPUT_DIR,
