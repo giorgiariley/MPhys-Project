@@ -19,7 +19,6 @@ W_UV_MAX = 1800.0
 cosmo = Planck18
 
 # --- BETA CALCULATION CONSTANTS (Calzetti+1994 Filter Definitions) ---
-# Use the explicit C94 filter boundaries provided by the user. These are REST-FRAME wavelengths.
 LOWER_C94_FILT = np.array([1268., 1309., 1342., 1407., 1562., 1677., 1760., 1866., 1930., 2400.])
 UPPER_C94_FILT = np.array([1284., 1316., 1371., 1515., 1583., 1740., 1833., 1890., 1950., 2580.])
 
@@ -107,36 +106,57 @@ def get_rest_frame_spectrum(wave_obs_um: np.ndarray, flux_obs_uJy: np.ndarray,
     return w[keep], f[keep], e[keep]
 
 # ----------------------------------------------------------------------
-## MUV CALCULATION (Reused)
+## MUV CALCULATION (Modified to include error)
 # ----------------------------------------------------------------------
 
-def calculate_muv(w_rest: np.ndarray, f_rest_flambda: np.ndarray, z: float, 
-                  w_min: float = W_UV_MIN, w_max: float = W_UV_MAX) -> Optional[float]:
+def calculate_integral_error(w_window: np.ndarray, e_window: np.ndarray) -> float:
     """
-    Calculates M_UV (Absolute AB Magnitude) using the integrated flux method.
+    Calculates the error on the integrated flux (dI) using quadrature: 
+    dI^2 ~ Sum (e_i * dw_i)^2, where dw_i are the wavelength steps.
+    """
+    if len(w_window) < 2:
+        return np.nan
+        
+    # Approximate wavelength steps dw_i
+    dw = np.diff(w_window, prepend=w_window[0], append=w_window[-1])
+    dw_i = (dw[:-1] + dw[1:]) / 2.0
+    
+    # Simple weighted quadrature sum (dI^2)
+    dI_sq = np.sum((e_window * dw_i)**2)
+    return np.sqrt(dI_sq)
+
+
+def calculate_muv_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, 
+                            e_rest_flambda: np.ndarray, z: float, 
+                            w_min: float = W_UV_MIN, w_max: float = W_UV_MAX) -> tuple[Optional[float], Optional[float]]:
+    """
+    Calculates M_UV (Absolute AB Magnitude) and its error (Delta M_UV).
     """
     
     is_UV = (w_rest >= w_min) & (w_rest <= w_max)
     
     if not is_UV.any():
-        return None
+        return None, None
     
     w_window = w_rest[is_UV]
     f_window = f_rest_flambda[is_UV]
+    e_window = e_rest_flambda[is_UV]
     
-    valid_mask = np.isfinite(f_window)
+    valid_mask = np.isfinite(f_window) & np.isfinite(e_window) & (e_window >= 0)
     w_window = w_window[valid_mask]
     f_window = f_window[valid_mask]
+    e_window = e_window[valid_mask]
 
     if len(w_window) < 2:
-        return None
+        return None, None
 
+    # --- M_UV CALCULATION ---
     integral_flam = simpson(f_window, x=w_window)
     bandpass_width = w_max - w_min
     Flam_UV_mean = integral_flam / bandpass_width
     
     if Flam_UV_mean <= 0:
-        return None
+        return None, None
         
     lambda_eff = (w_min + w_max) / 2.0
     
@@ -150,25 +170,37 @@ def calculate_muv(w_rest: np.ndarray, f_rest_flambda: np.ndarray, z: float,
     K = -2.5 * np.log10(1 + z)
     
     M_UV_AB = m_UV_AB - DM - K
+
+    # --- Delta M_UV CALCULATION ---
+    integral_flam_err = calculate_integral_error(w_window, e_window)
+    Flam_UV_mean_err = integral_flam_err / bandpass_width
     
-    return M_UV_AB
+    # Magnitude error formula: Delta M = 1.0857 * (Delta F / F)
+    delta_M_UV = (2.5 / np.log(10)) * (Flam_UV_mean_err / Flam_UV_mean)
+    
+    if not np.isfinite(delta_M_UV) or delta_M_UV < 0:
+        return M_UV_AB, None
+
+    return M_UV_AB, delta_M_UV
+
 
 # ----------------------------------------------------------------------
-## BETA CALCULATION FUNCTIONS (Reused)
+## BETA CALCULATION FUNCTIONS (Modified to include error)
 # ----------------------------------------------------------------------
 
 def beta_slope_power_law_func(log_w, log_a, beta):
     """Log-linear form for power law fit: log(F_lambda) = log(a) + beta * log(lambda)."""
     return log_a + beta * log_w
 
-def sample_spectrum_C94(w_rest: np.ndarray, f_rest: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def sample_spectrum_C94(w_rest: np.ndarray, f_rest: np.ndarray, e_rest: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Samples the median F_lambda within the 10 standard C94 rest-frame UV filters.
+    Samples the median F_lambda and the error on the median (sigma/sqrt(N)) 
+    within the 10 standard C94 rest-frame UV filters.
     """
     sampled_waves = []
     sampled_fluxes = []
+    sampled_errors = []
 
-    # Iterate through the 10 C94 filters
     for w_min, w_max in zip(LOWER_C94_FILT, UPPER_C94_FILT):
         mask = (w_rest >= w_min) & (w_rest <= w_max)
         
@@ -176,58 +208,85 @@ def sample_spectrum_C94(w_rest: np.ndarray, f_rest: np.ndarray) -> tuple[np.ndar
             continue
             
         f_window = f_rest[mask]
+        e_window = e_rest[mask]
         
-        # Use median flux for robustness and require positive flux
-        median_flux = np.median(f_window[np.isfinite(f_window) & (f_window > 0)])
+        valid_points = np.isfinite(f_window) & np.isfinite(e_window) & (f_window > 0)
+        
+        if np.sum(valid_points) < 2:
+            continue
+
+        f_window = f_window[valid_points]
+        e_window = e_window[valid_points]
+        N = len(f_window)
+
+        median_flux = np.median(f_window)
+        # Error on the sampled flux: use the standard error of the median error 
+        median_error = np.median(e_window) / np.sqrt(N) 
         
         if median_flux > 0:
-            # Use the average wavelength of the bandpass as the sampling point
             sampled_waves.append((w_min + w_max) / 2.0)
             sampled_fluxes.append(median_flux)
+            sampled_errors.append(median_error)
 
-    return np.array(sampled_waves), np.array(sampled_fluxes)
+    return np.array(sampled_waves), np.array(sampled_fluxes), np.array(sampled_errors)
 
 
-def calculate_beta(w_rest: np.ndarray, f_rest_flambda: np.ndarray) -> Optional[float]:
+def calculate_beta_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, e_rest_flambda: np.ndarray) -> tuple[Optional[float], Optional[float]]:
     """
-    Calculates the UV continuum slope (beta) by fitting a power law to fluxes 
-    sampled in the C94 filter bands.
+    Calculates the UV continuum slope (beta) and its error by fitting a power law 
+    using fluxes and errors sampled in the C94 filter bands.
     """
     # 1. Sample the spectrum using the C94 filter windows
-    sampled_waves, sampled_fluxes = sample_spectrum_C94(w_rest, f_rest_flambda)
+    sampled_waves, sampled_fluxes, sampled_errors = sample_spectrum_C94(w_rest, f_rest_flambda, e_rest_flambda)
 
     # 2. Check for sufficient data points
     if len(sampled_waves) < 2:
-        return None
+        return None, None
 
-    # 3. Perform the log-linear fit: log(F_lambda) = log(a) + beta * log(lambda)
+    # 3. Calculate errors in log space: Delta log(F) = 1.0857 * (Delta F / F)
+    valid_mask = (sampled_fluxes > 0) & (sampled_errors > 0) & np.isfinite(sampled_errors)
+    if np.sum(valid_mask) < 2:
+         return None, None
+
+    sampled_waves = sampled_waves[valid_mask]
+    sampled_fluxes = sampled_fluxes[valid_mask]
+    sampled_errors = sampled_errors[valid_mask]
+    
+    # Delta log(F) = (2.5 / ln(10)) * (Delta F / F)
+    log_flux_errors = (2.5 / np.log(10)) * (sampled_errors / sampled_fluxes)
+    
+    # 4. Perform the log-linear fit
     try:
         popt, pcov = curve_fit(
             beta_slope_power_law_func, 
             np.log10(sampled_waves), 
             np.log10(sampled_fluxes),
-            p0=[0, -2.0], # Initial guess for [log(a), beta]
+            sigma=log_flux_errors,       # Pass uncertainties
+            absolute_sigma=True,         # Treat sigma as absolute errors
+            p0=[0, -2.0], 
             maxfev=5000
         )
         
-        # The second parameter is beta
         beta = popt[1]
         
-        if np.isfinite(beta):
-             return beta
+        # Calculate error on beta: sqrt(covariance matrix diagonal element pcov[1, 1])
+        beta_err = np.sqrt(pcov[1, 1])
+        
+        if np.isfinite(beta) and np.isfinite(beta_err):
+             return beta, beta_err
         else:
-            return None
+            return None, None
 
     except Exception:
-        return None # Fit failed due to singular matrix, extreme values, etc.
+        return None, None # Fit failed
 
 # ----------------------------------------------------------------------
-## MAIN EXECUTION AND PLOTTING
+## MAIN EXECUTION AND PLOTTING (Modified to collect and use errors)
 # ----------------------------------------------------------------------
 
 def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
     """
-    Main function to calculate MUV/Beta, plot results, and save data.
+    Main function to calculate MUV/Beta/Errors, plot results, and save data.
     """
     os.makedirs(output_dir, exist_ok=True)
     fits_files = find_prism_fits(base_dir)
@@ -253,11 +312,25 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
             wave_obs, flux_obs, err_obs = read_observed_spectrum(fits_path)
             w_rest, f_rest, e_rest = get_rest_frame_spectrum(wave_obs, flux_obs, err_obs, z)
             
-            muv = calculate_muv(w_rest, f_rest, z)
-            beta = calculate_beta(w_rest, f_rest)
+            # Use the new functions to get values AND errors
+            muv, muv_err = calculate_muv_and_error(w_rest, f_rest, e_rest, z)
+            beta, beta_err = calculate_beta_and_error(w_rest, f_rest, e_rest)
             
-            if muv is not None and beta is not None and np.isfinite(muv) and np.isfinite(beta):
-                muv_beta_data.append({'z': z, 'muv': muv, 'beta': beta, 'file': file_name})
+            # Only keep points where both values AND errors are valid
+            valid_muv_beta = (muv is not None and beta is not None and 
+                              muv_err is not None and beta_err is not None and
+                              np.isfinite(muv) and np.isfinite(beta) and 
+                              np.isfinite(muv_err) and np.isfinite(beta_err))
+
+            if valid_muv_beta:
+                muv_beta_data.append({
+                    'z': z, 
+                    'muv': muv, 
+                    'beta': beta, 
+                    'muv_err': muv_err,
+                    'beta_err': beta_err,
+                    'file': file_name
+                })
             
         except Exception as e:
             # print(f"[{progress}] Error processing {fits_path.name}: {e}")
@@ -270,43 +343,53 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
 
     df_data = pd.DataFrame(muv_beta_data)
     
+    # Define plotting parameters
+    z_errs = 0.0 # No redshift error available
+
     # --------------------------------------
-    # 1. Plot Beta vs. M_UV (NEW FINAL PLOT)
+    # 1. Plot Beta vs. M_UV (X and Y errors)
     # --------------------------------------
     plt.figure(figsize=(10, 7))
-    plt.scatter(df_data['muv'], df_data['beta'], 
-                s=30, alpha=0.7, edgecolors='k', color='darkgreen')
+    # Use errorbar to plot both x and y errors
+    plt.errorbar(df_data['muv'], df_data['beta'], 
+                 xerr=df_data['muv_err'], yerr=df_data['beta_err'],
+                 fmt='o', markersize=5, alpha=0.7, capsize=3, 
+                 ecolor='k', color='darkgreen', zorder=1) # zorder ensures points are on top of grid
     
-    # M_UV is on the x-axis, and we invert the x-axis as is standard for magnitude plots
     plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
     plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
     plt.title(f"UV Slope (Beta) vs. M_UV (N={len(df_data)})", fontsize=16)
     #plt.gca().invert_xaxis() # Brighter objects (more negative MUV) should be to the left
-    plt.ylim(-3.0, 1.0) # Standard Beta range
+    plt.ylim(-3.0, 1.0) 
     plt.grid(alpha=0.3)
     plt.tight_layout()
     
-    plot_path_beta_muv = output_dir / "beta_vs_muv_plot.png"
+    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_with_errs.png"
     plt.savefig(plot_path_beta_muv, dpi=200)
-    print(f"\nSaved Beta vs M_UV plot successfully to: {plot_path_beta_muv.resolve()}")
+    print(f"\nSaved Beta vs M_UV plot with error bars successfully to: {plot_path_beta_muv.resolve()}")
     
-    # 2. Plot M_UV vs. z (Reused)
+    # 2. Plot M_UV vs. z (Y error only)
     plt.figure(figsize=(10, 7))
-    plt.scatter(df_data['z'], df_data['muv'], 
-                s=30, alpha=0.7, edgecolors='k', color='dodgerblue')
+    plt.errorbar(df_data['z'], df_data['muv'], 
+                 xerr=z_errs, yerr=df_data['muv_err'],
+                 fmt='o', markersize=5, alpha=0.7, capsize=3, 
+                 ecolor='k', color='dodgerblue', zorder=1)
+                 
     plt.xlabel("Redshift (z)", fontsize=14)
     plt.ylabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14) 
     plt.title(f"M_UV vs. Redshift (N={len(df_data)})", fontsize=16)
     plt.gca().invert_yaxis()
     plt.grid(alpha=0.3)
     plt.tight_layout()
-    plt.savefig(output_dir / "muv_vs_z_plot_filtered_final.png", dpi=200)
-    print(f"Saved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_filtered_final.png').resolve()}")
+    plt.savefig(output_dir / "muv_vs_z_plot_with_errs.png", dpi=200)
+    print(f"Saved MUV vs z plot with error bars to: {(output_dir / 'muv_vs_z_plot_with_errs.png').resolve()}")
 
-    # 3. Plot Beta vs. z (Reused)
+    # 3. Plot Beta vs. z (Y error only)
     plt.figure(figsize=(10, 7))
-    plt.scatter(df_data['z'], df_data['beta'], 
-                s=30, alpha=0.7, edgecolors='k', color='firebrick')
+    plt.errorbar(df_data['z'], df_data['beta'], 
+                 xerr=z_errs, yerr=df_data['beta_err'],
+                 fmt='o', markersize=5, alpha=0.7, capsize=3, 
+                 ecolor='k', color='firebrick', zorder=1)
     
     plt.xlabel("Redshift (z)", fontsize=14)
     plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
@@ -316,14 +399,14 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.grid(alpha=0.3)
     plt.tight_layout()
     
-    plot_path_beta = output_dir / "beta_vs_z_plot.png"
+    plot_path_beta = output_dir / "beta_vs_z_plot_with_errs.png"
     plt.savefig(plot_path_beta, dpi=200)
-    print(f"Saved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
+    print(f"Saved Beta vs z plot with error bars successfully to: {plot_path_beta.resolve()}")
     
-    # Save the final combined data
-    csv_path_out = output_dir / "muv_beta_z_results.csv"
+    # Save the final combined data including errors
+    csv_path_out = output_dir / "muv_beta_z_results_with_errs.csv"
     df_data.to_csv(csv_path_out, index=False)
-    print(f"MUV and Beta results saved to: {csv_path_out.resolve()}")
+    print(f"MUV and Beta results with errors saved to: {csv_path_out.resolve()}")
 
 
 # ----------------------------------------------------------------------
