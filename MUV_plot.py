@@ -475,10 +475,10 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
                      elinewidth=0.2, # Very thin lines
                      alpha=ALPHA_POINTS_PHOTO, # Use point alpha for transparency
                      ecolor=MARKER_COLOR_PHOTO, # Pale red lines
-                     markerfacecolor='None', # No marker center needed
+                     markerfacecolor= MARKER_COLOR_PHOTO, # No marker center needed
                      markeredgecolor=MARKER_COLOR_PHOTO,
                      markeredgewidth=0.3, # Thin edge around the marker
-                     label='Photometry w/ Errors (~15,000 points)', 
+                     label='Photometry w/ Errors', 
                      zorder=0) 
 
     # Layer 2: Spectroscopic error bars (uncertainty)
