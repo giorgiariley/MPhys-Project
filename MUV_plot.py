@@ -19,6 +19,7 @@ W_UV_MAX = 1800.0
 cosmo = Planck18
 
 # --- BETA CALCULATION CONSTANTS (Calzetti+1994 Filter Definitions) ---
+# Use the explicit C94 filter boundaries provided by the user. These are REST-FRAME wavelengths.
 LOWER_C94_FILT = np.array([1268., 1309., 1342., 1407., 1562., 1677., 1760., 1866., 1930., 2400.])
 UPPER_C94_FILT = np.array([1284., 1316., 1371., 1515., 1583., 1740., 1833., 1890., 1950., 2580.])
 
@@ -220,7 +221,7 @@ def sample_spectrum_C94(w_rest: np.ndarray, f_rest: np.ndarray, e_rest: np.ndarr
         N = len(f_window)
 
         median_flux = np.median(f_window)
-        # Error on the sampled flux: use the standard error of the median error 
+        # Error on the sampled flux: use the standard error of the mean error 
         median_error = np.median(e_window) / np.sqrt(N) 
         
         if median_flux > 0:
@@ -281,7 +282,7 @@ def calculate_beta_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, e_r
         return None, None # Fit failed
 
 # ----------------------------------------------------------------------
-## MAIN EXECUTION AND PLOTTING (Modified to collect and use errors)
+## MAIN EXECUTION AND PLOTTING (Modified to improve aesthetics)
 # ----------------------------------------------------------------------
 
 def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
@@ -343,67 +344,102 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
 
     df_data = pd.DataFrame(muv_beta_data)
     
-    # Define plotting parameters
+    # Define plotting parameters for aesthetic improvement
     z_errs = 0.0 # No redshift error available
+    MARKER_COLOR = '#1b7b3b' # Darker green for contrast
+    ERROR_BAR_COLOR = '#666666' # Light gray for minimal dominance
+    MARKER_SIZE = 4
+    CAP_SIZE = 2
+    LINE_WIDTH = 0.5
+    ALPHA_POINTS = 0.8
+    ALPHA_ERRORS = 0.4
+    
+    # Set the style for better readability
+    plt.style.use('default') 
 
     # --------------------------------------
     # 1. Plot Beta vs. M_UV (X and Y errors)
     # --------------------------------------
     plt.figure(figsize=(10, 7))
-    # Use errorbar to plot both x and y errors
+    # Use errorbar with reduced clutter and light error bar color
     plt.errorbar(df_data['muv'], df_data['beta'], 
                  xerr=df_data['muv_err'], yerr=df_data['beta_err'],
-                 fmt='o', markersize=5, alpha=0.7, capsize=3, 
-                 ecolor='k', color='darkgreen', zorder=1) # zorder ensures points are on top of grid
+                 fmt='o', 
+                 markersize=MARKER_SIZE, 
+                 capsize=CAP_SIZE, 
+                 elinewidth=LINE_WIDTH, # Thin error lines
+                 alpha=ALPHA_ERRORS,    # Transparent error bars
+                 ecolor=ERROR_BAR_COLOR, 
+                 markerfacecolor=MARKER_COLOR, # Marker color
+                 markeredgecolor='k', 
+                 markeredgewidth=0.5,
+                 zorder=1) # Error bars below points (for clarity)
     
-    plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
-    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
-    plt.title(f"UV Slope (Beta) vs. M_UV (N={len(df_data)})", fontsize=16)
-    #plt.gca().invert_xaxis() # Brighter objects (more negative MUV) should be to the left
-    plt.ylim(-3.0, 1.0) 
-    plt.grid(alpha=0.3)
+    # Overlay the points again without error bars but with full opacity
+    # This makes the centers clearer while errors fade into the background
+    plt.scatter(df_data['muv'], df_data['beta'], 
+                s=MARKER_SIZE*5, alpha=ALPHA_POINTS, 
+                color=MARKER_COLOR, edgecolors='k', linewidths=0.5, zorder=2)
+    
+    plt.xlabel("Absolute UV Magnitude ($M_{UV}$) [AB mag]", fontsize=14)
+    plt.ylabel("UV Continuum Slope ($\\beta$)", fontsize=14)
+    plt.title(f"UV Slope vs. M_UV (N={len(df_data)})", fontsize=16)
+    plt.ylim(-3.0, 1.0)
+    plt.grid(alpha=0.2, linestyle='--') # Lighter grid lines
     plt.tight_layout()
     
-    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_with_errs.png"
-    plt.savefig(plot_path_beta_muv, dpi=200)
-    print(f"\nSaved Beta vs M_UV plot with error bars successfully to: {plot_path_beta_muv.resolve()}")
+    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_improved.png"
+    plt.savefig(plot_path_beta_muv, dpi=300) # Increased DPI for better image quality
+    print(f"\nSaved improved Beta vs M_UV plot successfully to: {plot_path_beta_muv.resolve()}")
     
     # 2. Plot M_UV vs. z (Y error only)
     plt.figure(figsize=(10, 7))
     plt.errorbar(df_data['z'], df_data['muv'], 
                  xerr=z_errs, yerr=df_data['muv_err'],
-                 fmt='o', markersize=5, alpha=0.7, capsize=3, 
-                 ecolor='k', color='dodgerblue', zorder=1)
+                 fmt='o', markersize=MARKER_SIZE, capsize=CAP_SIZE, elinewidth=LINE_WIDTH,
+                 alpha=ALPHA_ERRORS, ecolor=ERROR_BAR_COLOR, 
+                 markerfacecolor='dodgerblue', markeredgecolor='k', markeredgewidth=0.5,
+                 zorder=1)
+    
+    plt.scatter(df_data['z'], df_data['muv'], 
+                s=MARKER_SIZE*5, alpha=ALPHA_POINTS, 
+                color='dodgerblue', edgecolors='k', linewidths=0.5, zorder=2)
                  
     plt.xlabel("Redshift (z)", fontsize=14)
-    plt.ylabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14) 
+    plt.ylabel("Absolute UV Magnitude ($M_{UV}$) [AB mag]", fontsize=14) 
     plt.title(f"M_UV vs. Redshift (N={len(df_data)})", fontsize=16)
     plt.gca().invert_yaxis()
-    plt.grid(alpha=0.3)
+    plt.grid(alpha=0.2, linestyle='--')
     plt.tight_layout()
-    plt.savefig(output_dir / "muv_vs_z_plot_with_errs.png", dpi=200)
-    print(f"Saved MUV vs z plot with error bars to: {(output_dir / 'muv_vs_z_plot_with_errs.png').resolve()}")
+    plt.savefig(output_dir / "muv_vs_z_plot_improved.png", dpi=300)
+    print(f"Saved improved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_improved.png').resolve()}")
 
     # 3. Plot Beta vs. z (Y error only)
     plt.figure(figsize=(10, 7))
     plt.errorbar(df_data['z'], df_data['beta'], 
                  xerr=z_errs, yerr=df_data['beta_err'],
-                 fmt='o', markersize=5, alpha=0.7, capsize=3, 
-                 ecolor='k', color='firebrick', zorder=1)
+                 fmt='o', markersize=MARKER_SIZE, capsize=CAP_SIZE, elinewidth=LINE_WIDTH,
+                 alpha=ALPHA_ERRORS, ecolor=ERROR_BAR_COLOR, 
+                 markerfacecolor='firebrick', markeredgecolor='k', markeredgewidth=0.5,
+                 zorder=1)
+                 
+    plt.scatter(df_data['z'], df_data['beta'], 
+                s=MARKER_SIZE*5, alpha=ALPHA_POINTS, 
+                color='firebrick', edgecolors='k', linewidths=0.5, zorder=2)
     
     plt.xlabel("Redshift (z)", fontsize=14)
-    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
-    plt.title(f"UV Slope (Beta) vs. Redshift (N={len(df_data)})", fontsize=16)
+    plt.ylabel("UV Continuum Slope ($\\beta$)", fontsize=14)
+    plt.title(f"UV Slope ($\\beta$) vs. Redshift (N={len(df_data)})", fontsize=16)
     
     plt.ylim(-3.0, 1.0) 
-    plt.grid(alpha=0.3)
+    plt.grid(alpha=0.2, linestyle='--')
     plt.tight_layout()
     
-    plot_path_beta = output_dir / "beta_vs_z_plot_with_errs.png"
-    plt.savefig(plot_path_beta, dpi=200)
-    print(f"Saved Beta vs z plot with error bars successfully to: {plot_path_beta.resolve()}")
+    plot_path_beta = output_dir / "beta_vs_z_plot_improved.png"
+    plt.savefig(plot_path_beta, dpi=300)
+    print(f"Saved improved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
     
-    # Save the final combined data including errors
+    # Save the final combined data including errors (using the original filename convention)
     csv_path_out = output_dir / "muv_beta_z_results_with_errs.csv"
     df_data.to_csv(csv_path_out, index=False)
     print(f"MUV and Beta results with errors saved to: {csv_path_out.resolve()}")
