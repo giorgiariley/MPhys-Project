@@ -113,26 +113,63 @@ def get_rest_frame_spectrum(wave_obs_um: np.ndarray, flux_obs_uJy: np.ndarray,
 
 def load_photometric_data(fits_path: str, hdu_index: int) -> Optional[pd.DataFrame]:
     """
-    Loads photometric Beta and M_UV data from a specific FITS HDU.
+    Loads photometric Beta and M_UV data, including 16th/84th percentiles for errors,
+    with explicit handling for potential byte order issues (Big-endian vs Little-endian).
     """
     try:
         if not Path(fits_path).exists():
             print(f"Warning: Photometric catalogue not found at {fits_path}.")
             return None
             
-        with fits.open(fits_path) as hdul:
-            # FIX: Removed the -1 based on user feedback, assuming HDU 4 corresponds to index 4.
+        # Open FITS file with parameters to avoid automatic scaling/conversion issues
+        with fits.open(fits_path, do_not_scale_image_data=True, uint=False) as hdul:
             data = hdul[hdu_index].data 
             
-            # Extract the required columns
-            muv = data['M_UV_50']
-            beta = data['beta_C94_50']
+            # --- BYTE SWAPPING IMPLEMENTATION ---
+            # Explicitly swap byte order if the data is not in native format.
+            # This is necessary when reading Big-endian FITS files on Little-endian systems (like most modern PCs).
+            try:
+                muv_50 = data['M_UV_50'].byteswap().newbyteorder()
+                muv_16 = data['M_UV_16'].byteswap().newbyteorder()
+                muv_84 = data['M_UV_84'].byteswap().newbyteorder()
+                
+                beta_50 = data['beta_C94_50'].byteswap().newbyteorder()
+                beta_16 = data['beta_C94_16'].byteswap().newbyteorder()
+                beta_84 = data['beta_C94_84'].byteswap().newbyteorder()
+            except AttributeError:
+                # If byteswap() is not available (e.g., already in native format or simple type),
+                # assume the data is readable directly.
+                print("Warning: Byte-swapping failed, attempting to read arrays directly.")
+                muv_50 = data['M_UV_50']
+                muv_16 = data['M_UV_16']
+                muv_84 = data['M_UV_84']
+                
+                beta_50 = data['beta_C94_50']
+                beta_16 = data['beta_C94_16']
+                beta_84 = data['beta_C94_84']
+
+
+            # Calculate ASYMMETRIC ERRORS relative to the median (50th percentile)
+            muv_err_low = muv_50 - muv_16  # Distance from median to 16th percentile
+            muv_err_high = muv_84 - muv_50 # Distance from median to 84th percentile
             
-            # Combine into a DataFrame and filter out NaNs/Infs
-            df_photo = pd.DataFrame({'muv': muv, 'beta': beta})
-            df_photo = df_photo.replace([np.inf, -np.inf], np.nan).dropna()
+            beta_err_low = beta_50 - beta_16 
+            beta_err_high = beta_84 - beta_50
             
-            print(f"Loaded {len(df_photo)} valid photometric Beta/M_UV points from HDU {hdu_index}.")
+            # Combine into a DataFrame
+            df_photo = pd.DataFrame({
+                'muv': muv_50, 
+                'beta': beta_50,
+                'muv_err_low': muv_err_low,
+                'muv_err_high': muv_err_high,
+                'beta_err_low': beta_err_low,
+                'beta_err_high': beta_err_high,
+            })
+            
+            # Filter out NaNs/Infs from primary values and ensure errors are sensible
+            df_photo = df_photo.replace([np.inf, -np.inf], np.nan).dropna(subset=['muv', 'beta'])
+            
+            print(f"Loaded {len(df_photo)} valid photometric Beta/M_UV points with errors from HDU {hdu_index}.")
             return df_photo
             
     except Exception as e:
@@ -378,7 +415,7 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
 
     df_data = pd.DataFrame(muv_beta_data)
     
-    # NEW STEP: Load Photometric Data
+    # NEW STEP: Load Photometric Data (now includes error arrays)
     df_photo = load_photometric_data(PHOTOMETRY_CATALOGUE_PATH, PHOTOMETRY_HDU)
     
     # Define plotting parameters for aesthetic improvement
@@ -405,17 +442,27 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     # ----------------------------------------------------
     plt.figure(figsize=(10, 7))
     
-    # Layer 1: Photometric data (background)
+    # Layer 1: Photometric error bars (asymmetric)
     if df_photo is not None and not df_photo.empty:
-        plt.scatter(df_photo['muv'], df_photo['beta'],
-                    # MODIFIED: Used new size variable
-                    s=MARKER_SIZE_PHOTO**2, 
-                    alpha=ALPHA_POINTS_PHOTO, 
-                    color=MARKER_COLOR_PHOTO, 
-                    marker='o', # Changed to a circle for better visibility
-                    # MODIFIED: Removed LaTeX formatting from label
-                    label='Photometry (~15,000 points)', 
-                    zorder=0) # Put behind everything else
+        # Assemble the asymmetric error arrays for errorbar plotting
+        muv_errs_photo = [df_photo['muv_err_low'].values, df_photo['muv_err_high'].values]
+        beta_errs_photo = [df_photo['beta_err_low'].values, df_photo['beta_err_high'].values]
+        
+        # Plot Photometric Error Bars
+        plt.errorbar(df_photo['muv'], df_photo['beta'],
+                     xerr=muv_errs_photo,
+                     yerr=beta_errs_photo,
+                     fmt='o', 
+                     markersize=MARKER_SIZE_PHOTO,
+                     capsize=1, # Very small capsize for densely packed errors
+                     elinewidth=0.2, # Very thin lines
+                     alpha=ALPHA_POINTS_PHOTO, # Use point alpha for transparency
+                     ecolor=MARKER_COLOR_PHOTO, # Pale red lines
+                     markerfacecolor=MARKER_COLOR_PHOTO, # No marker center needed
+                     markeredgecolor=MARKER_COLOR_PHOTO,
+                     markeredgewidth=0.3, # Thin edge around the marker
+                     label='Photometry w/ Errors (~15,000 points)', 
+                     zorder=0) 
 
     # Layer 2: Spectroscopic error bars (uncertainty)
     plt.errorbar(df_data['muv'], df_data['beta'], 
