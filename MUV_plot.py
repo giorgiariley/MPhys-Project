@@ -281,8 +281,7 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
     plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
     plt.title(f"UV Slope (Beta) vs. M_UV (N={len(df_data)})", fontsize=16)
-    
-    plt.gca().invert_xaxis() # Brighter objects (more negative MUV) should be to the left
+    #plt.gca().invert_xaxis() # Brighter objects (more negative MUV) should be to the left
     plt.ylim(-3.0, 1.0) # Standard Beta range
     plt.grid(alpha=0.3)
     plt.tight_layout()
