@@ -27,7 +27,7 @@ UPPER_C94_FILT = np.array([1284., 1316., 1371., 1515., 1583., 1740., 1833., 1890
 SPECTRA_BASE_DIR = "/raid/scratch/work/Griley/GALFIND_WORK/Spectra/2D"
 CSV_PATH_GLOBAL = Path("./mphys_GOODS_S_exposures.csv")
 OUTPUT_DIR = Path.cwd() / "MUV_plots"
-EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/specFitMSA/src/uv_snr_5plus.csv") 
+EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/uv_snr_5plus.csv") 
 
 # NEW CONSTANT FOR PHOTOMETRIC CATALOGUE
 PHOTOMETRY_CATALOGUE_PATH = "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits"
@@ -35,22 +35,27 @@ PHOTOMETRY_CATALOGUE_PATH = "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/
 
 
 # ----------------------------------------------------------------------
-## FILTERING HELPERS (Reused)
+## FILTERING HELPERS (Refactored to load SNR map)
 # ----------------------------------------------------------------------
 
-def get_snr_filter_files(snr_csv_path: Path) -> Set[str]:
+def load_snr_values(snr_csv_path: Path) -> Optional[Dict[str, float]]:
     """
-    Loads the external SNR CSV and returns a set of filenames present in the file.
+    Loads the external SNR CSV and returns a dictionary mapping filename to its SNR value.
+    This also serves as the file filter.
     """
     if not snr_csv_path.exists():
         print(f"Warning: SNR filter file not found at {snr_csv_path}. Proceeding without SNR filter.")
         return None 
         
     try:
-        df_snr = pd.read_csv(snr_csv_path, usecols=['file'])
-        valid_files = set(df_snr['file'].astype(str).values)
-        print(f"Loaded {len(valid_files)} filenames from the external CSV. These will be used as the MUV sample (implicit SNR >= 5.0).")
-        return valid_files
+        # Assuming the CSV contains 'file' (str) and 'snr' (float) columns
+        df_snr = pd.read_csv(snr_csv_path, usecols=['file', 'avg_snr_uv'])
+        
+        # Convert to dictionary for fast lookup: {'filename': snr_value}
+        snr_map = df_snr.set_index('file')['avg_snr_uv'].to_dict()
+        
+        print(f"Loaded {len(snr_map)} filenames and their SNR values from the external CSV.")
+        return snr_map
         
     except Exception as e:
         print(f"Error reading or filtering SNR file: {e}")
@@ -122,6 +127,7 @@ def load_photometric_data(fits_path: str) -> Optional[pd.DataFrame]:
             return None
             
         # --- HDU Indices (0-based) ---
+        # Note: HDU 4 is index 3, HDU 6 is index 5.
         MUV_HDU_INDEX = 4  # Corresponds to HDU 4
         BETA_HDU_INDEX = 6 # Corresponds to HDU 6
 
@@ -195,7 +201,7 @@ def load_photometric_data(fits_path: str) -> Optional[pd.DataFrame]:
 
 
 # ----------------------------------------------------------------------
-## MUV CALCULATION (Modified to include error)
+## MUV & BETA CALCULATION HELPERS
 # ----------------------------------------------------------------------
 
 def calculate_integral_error(w_window: np.ndarray, e_window: np.ndarray) -> float:
@@ -271,6 +277,9 @@ def calculate_muv_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray,
         return M_UV_AB, None
 
     return M_UV_AB, delta_M_UV
+
+
+# Note: calculate_snr_uv_window has been removed as SNR is loaded from the CSV.
 
 
 # ----------------------------------------------------------------------
@@ -375,13 +384,19 @@ def calculate_beta_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, e_r
 
 def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
     """
-    Main function to calculate MUV/Beta/Errors, plot results, and save data.
+    Main function to calculate MUV/Beta/Errors/SNR, plot results, and save data.
     """
     os.makedirs(output_dir, exist_ok=True)
     fits_files = find_prism_fits(base_dir)
     muv_beta_data = [] 
     
-    valid_snr_files = get_snr_filter_files(snr_filter_path)
+    # MODIFIED: Load SNR map instead of just filter files
+    snr_map = load_snr_values(snr_filter_path)
+    if snr_map is None:
+        # If the SNR map fails to load, we can't filter/analyze SNR, so we exit.
+        print("Cannot proceed with SNR analysis as external CSV could not be loaded.")
+        return 
+
     total_files = len(fits_files)
     print(f"Total initial FITS files found: {total_files}")
 
@@ -389,7 +404,8 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
         file_name = fits_path.name
         progress = f"{i + 1}/{total_files} computed"
         
-        if valid_snr_files is not None and file_name not in valid_snr_files:
+        # Use the SNR map for implicit filtering
+        if file_name not in snr_map:
             continue
 
         try:
@@ -405,11 +421,14 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
             muv, muv_err = calculate_muv_and_error(w_rest, f_rest, e_rest, z)
             beta, beta_err = calculate_beta_and_error(w_rest, f_rest, e_rest)
             
+            # FETCH SNR from the map instead of calculating it
+            snr = snr_map.get(file_name) 
+            
             # Only keep points where both values AND errors are valid
             valid_muv_beta = (muv is not None and beta is not None and 
-                              muv_err is not None and beta_err is not None and
+                              muv_err is not None and beta_err is not None and snr is not None and
                               np.isfinite(muv) and np.isfinite(beta) and 
-                              np.isfinite(muv_err) and np.isfinite(beta_err))
+                              np.isfinite(muv_err) and np.isfinite(beta_err) and np.isfinite(snr))
 
             if valid_muv_beta:
                 muv_beta_data.append({
@@ -418,6 +437,7 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
                     'beta': beta, 
                     'muv_err': muv_err,
                     'beta_err': beta_err,
+                    'snr': snr, # Store pre-calculated SNR
                     'file': file_name
                 })
             
@@ -425,12 +445,38 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
             # print(f"[{progress}] Error processing {fits_path.name}: {e}")
             pass 
 
-    # --- Plotting ---
+    # --- Plotting & Analysis ---
     if not muv_beta_data:
         print("\nNo valid MUV/Beta data points to plot after filtering. Exiting.")
         return
 
     df_data = pd.DataFrame(muv_beta_data)
+    
+    # ----------------------------------------------------------------
+    # SNR ANALYSIS: Find the 5 highest (closest to 0) M_UV points
+    # ----------------------------------------------------------------
+    
+    # 1. Filter for the M_UV range [-15.5, -14.0]
+    muv_min = -15.5
+    muv_max = -14.0
+    df_faint_subset = df_data[(df_data['muv'] >= muv_min) & (df_data['muv'] <= muv_max)].copy()
+    
+    if df_faint_subset.empty:
+        print(f"\nNo spectroscopic points found in the range M_UV = [{muv_min}, {muv_max}].")
+    else:
+        # 2. Sort by M_UV (ascending: from -15.5 up to -14.0)
+        # Note: A higher M_UV value (closer to -14.0) means a fainter galaxy.
+        df_faint_subset = df_faint_subset.sort_values(by='muv', ascending=True)
+
+        # 3. Get the top 5 faintest (highest M_UV) points
+        top_5_faintest = df_faint_subset.head(5)
+
+        # 4. Print the results
+        print(f"\n--- SNR for 5 Faintest Galaxies (M_UV $\in$ [{muv_min}, {muv_max}]) ---")
+        for index, row in top_5_faintest.iterrows():
+            print(f"File: {row['file']}, M_UV: {row['muv']:.2f}, SNR: {row['snr']:.2f}")
+        print("--------------------------------------------------------------------")
+
     
     # NEW STEP: Load Photometric Data (now without HDU index argument)
     df_photo = load_photometric_data(PHOTOMETRY_CATALOGUE_PATH)
