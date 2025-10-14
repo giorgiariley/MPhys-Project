@@ -31,7 +31,7 @@ EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablu
 
 # NEW CONSTANT FOR PHOTOMETRIC CATALOGUE
 PHOTOMETRY_CATALOGUE_PATH = "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits"
-PHOTOMETRY_HDU = 4 # The 4th HDU (index 3) is requested
+# PHOTOMETRY_HDU constant removed as two HDUs are now required.
 
 
 # ----------------------------------------------------------------------
@@ -111,50 +111,67 @@ def get_rest_frame_spectrum(wave_obs_um: np.ndarray, flux_obs_uJy: np.ndarray,
     
     return w[keep], f[keep], e[keep]
 
-def load_photometric_data(fits_path: str, hdu_index: int) -> Optional[pd.DataFrame]:
+def load_photometric_data(fits_path: str) -> Optional[pd.DataFrame]:
     """
-    Loads photometric Beta and M_UV data, including 16th/84th percentiles for errors,
-    with explicit handling for potential byte order issues (Big-endian vs Little-endian).
+    Loads photometric Beta and M_UV data from two different HDUs (4 and 6), 
+    including 16th/84th percentiles for errors.
     """
     try:
         if not Path(fits_path).exists():
             print(f"Warning: Photometric catalogue not found at {fits_path}.")
             return None
             
-        # Open FITS file with parameters to avoid automatic scaling/conversion issues
+        # --- HDU Indices (0-based) ---
+        MUV_HDU_INDEX = 4  # Corresponds to HDU 4
+        BETA_HDU_INDEX = 6 # Corresponds to HDU 6
+
+        # Open FITS file with parameters to handle byte order issues
         with fits.open(fits_path, do_not_scale_image_data=True, uint=False) as hdul:
-            data = hdul[hdu_index].data 
             
-            # --- BYTE SWAPPING IMPLEMENTATION ---
-            # Explicitly swap byte order if the data is not in native format.
-            # This is necessary when reading Big-endian FITS files on Little-endian systems (like most modern PCs).
+            # Load Data from two different HDUs
+            data_muv = hdul[MUV_HDU_INDEX].data 
+            data_beta = hdul[BETA_HDU_INDEX].data 
+            
+            # --- Column Names ---
+            MUV_COL = 'M_UV_50'
+            BETA_COL = 'beta_[1250,3000]AA_0.32as' 
+            
+            # Use data_muv for M_UV columns and data_beta for Beta columns
             try:
-                muv_50 = data['M_UV_50'].byteswap().newbyteorder()
-                muv_16 = data['M_UV_16'].byteswap().newbyteorder()
-                muv_84 = data['M_UV_84'].byteswap().newbyteorder()
+                # MUV columns from HDU 4 data
+                muv_50 = data_muv[MUV_COL].byteswap().newbyteorder()
+                muv_16 = data_muv['M_UV_16'].byteswap().newbyteorder()
+                muv_84 = data_muv['M_UV_84'].byteswap().newbyteorder()
                 
-                beta_50 = data['beta_C94_50'].byteswap().newbyteorder()
-                beta_16 = data['beta_C94_16'].byteswap().newbyteorder()
-                beta_84 = data['beta_C94_84'].byteswap().newbyteorder()
+                # BETA columns from HDU 6 data
+                beta_50 = data_beta[BETA_COL].byteswap().newbyteorder()
+                beta_16 = data_beta[BETA_COL + '_l1'].byteswap().newbyteorder()
+                beta_84 = data_beta[BETA_COL + '_u1'].byteswap().newbyteorder()
             except AttributeError:
-                # If byteswap() is not available (e.g., already in native format or simple type),
-                # assume the data is readable directly.
+                # Fallback if byteswap() fails
                 print("Warning: Byte-swapping failed, attempting to read arrays directly.")
-                muv_50 = data['M_UV_50']
-                muv_16 = data['M_UV_16']
-                muv_84 = data['M_UV_84']
+                muv_50 = data_muv[MUV_COL]
+                muv_16 = data_muv['M_UV_16']
+                muv_84 = data_muv['M_UV_84']
                 
-                beta_50 = data['beta_C94_50']
-                beta_16 = data['beta_C94_16']
-                beta_84 = data['beta_C94_84']
+                beta_50 = data_beta[BETA_COL]
+                beta_16 = data_beta[BETA_COL + '_l1']
+                beta_84 = data_beta[BETA_COL + '_u1']
+            
+            # Ensure catalogs have the same length before proceeding
+            if len(muv_50) != len(beta_50):
+                 print(f"Error: M_UV (HDU {MUV_HDU_INDEX+1}) and Beta (HDU {BETA_HDU_INDEX+1}) tables have different lengths. Aborting load.")
+                 return None
 
 
             # Calculate ASYMMETRIC ERRORS relative to the median (50th percentile)
-            muv_err_low = muv_50 - muv_16  # Distance from median to 16th percentile
-            muv_err_high = muv_84 - muv_50 # Distance from median to 84th percentile
+            # M_UV is a magnitude: brighter (more negative) is usually smaller index (16th)
+            muv_err_low = muv_50 - muv_16  # Distance from median to 16th percentile (lower magnitude side)
+            muv_err_high = muv_84 - muv_50 # Distance from median to 84th percentile (higher magnitude side)
             
-            beta_err_low = beta_50 - beta_16 
-            beta_err_high = beta_84 - beta_50
+            # Beta is a slope: lower index (16th) is lower beta
+            beta_err_low = beta_16 
+            beta_err_high = beta_84
             
             # Combine into a DataFrame
             df_photo = pd.DataFrame({
@@ -169,7 +186,7 @@ def load_photometric_data(fits_path: str, hdu_index: int) -> Optional[pd.DataFra
             # Filter out NaNs/Infs from primary values and ensure errors are sensible
             df_photo = df_photo.replace([np.inf, -np.inf], np.nan).dropna(subset=['muv', 'beta'])
             
-            print(f"Loaded {len(df_photo)} valid photometric Beta/M_UV points with errors from HDU {hdu_index}.")
+            print(f"Loaded {len(df_photo)} valid photometric Beta/M_UV points using HDU {MUV_HDU_INDEX+1} (M_UV) and HDU {BETA_HDU_INDEX+1} (Beta).")
             return df_photo
             
     except Exception as e:
@@ -415,8 +432,8 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
 
     df_data = pd.DataFrame(muv_beta_data)
     
-    # NEW STEP: Load Photometric Data (now includes error arrays)
-    df_photo = load_photometric_data(PHOTOMETRY_CATALOGUE_PATH, PHOTOMETRY_HDU)
+    # NEW STEP: Load Photometric Data (now without HDU index argument)
+    df_photo = load_photometric_data(PHOTOMETRY_CATALOGUE_PATH)
     
     # Define plotting parameters for aesthetic improvement
     z_errs = 0.0 # No redshift error available
@@ -458,7 +475,7 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
                      elinewidth=0.2, # Very thin lines
                      alpha=ALPHA_POINTS_PHOTO, # Use point alpha for transparency
                      ecolor=MARKER_COLOR_PHOTO, # Pale red lines
-                     markerfacecolor=MARKER_COLOR_PHOTO, # No marker center needed
+                     markerfacecolor='None', # No marker center needed
                      markeredgecolor=MARKER_COLOR_PHOTO,
                      markeredgewidth=0.3, # Thin edge around the marker
                      label='Photometry w/ Errors (~15,000 points)', 
@@ -489,8 +506,8 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
     # MODIFIED: Removed LaTeX formatting from ylabel
     plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
-    # MODIFIED: Removed LaTeX formatting from title
-    plt.title(f"UV Slope vs. M_UV (Spectro N={len(df_data)})", fontsize=16)
+    # UPDATED: Added _power to the title
+    plt.title(f"UV Slope vs. M_UV (Spectro N={len(df_data)})_power", fontsize=16)
     
     # X-axis not inverted, as requested
     plt.ylim(-3.0, 1.0) 
@@ -498,7 +515,8 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.legend(frameon=True, fontsize=10)
     plt.tight_layout()
     
-    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_with_photo.png"
+    # UPDATED: Added _power to the output filename
+    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_with_photo_power.png" 
     plt.savefig(plot_path_beta_muv, dpi=300) 
     print(f"\nSaved Beta vs M_UV plot with photometric overlay successfully to: {plot_path_beta_muv.resolve()}")
     
