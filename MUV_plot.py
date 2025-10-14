@@ -510,7 +510,7 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
     plt.title(f"UV Slope vs. M_UV (Spectro N={len(df_data)})_power", fontsize=16)
     
     # X-axis not inverted, as requested
-    plt.ylim(-3.0, 1.0) 
+    plt.ylim(-5, 3) 
     plt.grid(alpha=0.2, linestyle='--') 
     plt.legend(frameon=True, fontsize=10)
     plt.tight_layout()
