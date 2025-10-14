@@ -29,6 +29,11 @@ CSV_PATH_GLOBAL = Path("./mphys_GOODS_S_exposures.csv")
 OUTPUT_DIR = Path.cwd() / "MUV_plots"
 EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/specFitMSA/src/uv_snr_5plus.csv") 
 
+# NEW CONSTANT FOR PHOTOMETRIC CATALOGUE
+PHOTOMETRY_CATALOGUE_PATH = "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits"
+PHOTOMETRY_HDU = 4 # The 4th HDU (index 3) is requested
+
+
 # ----------------------------------------------------------------------
 ## FILTERING HELPERS (Reused)
 # ----------------------------------------------------------------------
@@ -105,6 +110,35 @@ def get_rest_frame_spectrum(wave_obs_um: np.ndarray, flux_obs_uJy: np.ndarray,
     keep = np.isfinite(w) & np.isfinite(f) & np.isfinite(e) & (e >= 0)
     
     return w[keep], f[keep], e[keep]
+
+def load_photometric_data(fits_path: str, hdu_index: int) -> Optional[pd.DataFrame]:
+    """
+    Loads photometric Beta and M_UV data from a specific FITS HDU.
+    """
+    try:
+        if not Path(fits_path).exists():
+            print(f"Warning: Photometric catalogue not found at {fits_path}.")
+            return None
+            
+        with fits.open(fits_path) as hdul:
+            # FIX: Removed the -1 based on user feedback, assuming HDU 4 corresponds to index 4.
+            data = hdul[hdu_index].data 
+            
+            # Extract the required columns
+            muv = data['M_UV_50']
+            beta = data['beta_C94_50']
+            
+            # Combine into a DataFrame and filter out NaNs/Infs
+            df_photo = pd.DataFrame({'muv': muv, 'beta': beta})
+            df_photo = df_photo.replace([np.inf, -np.inf], np.nan).dropna()
+            
+            print(f"Loaded {len(df_photo)} valid photometric Beta/M_UV points from HDU {hdu_index}.")
+            return df_photo
+            
+    except Exception as e:
+        print(f"Error loading photometric catalogue from {fits_path}: {e}")
+        return None
+
 
 # ----------------------------------------------------------------------
 ## MUV CALCULATION (Modified to include error)
@@ -282,7 +316,7 @@ def calculate_beta_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, e_r
         return None, None # Fit failed
 
 # ----------------------------------------------------------------------
-## MAIN EXECUTION AND PLOTTING (Modified to improve aesthetics)
+## MAIN EXECUTION AND PLOTTING (Modified to improve aesthetics and add photometry)
 # ----------------------------------------------------------------------
 
 def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
@@ -344,53 +378,82 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
 
     df_data = pd.DataFrame(muv_beta_data)
     
+    # NEW STEP: Load Photometric Data
+    df_photo = load_photometric_data(PHOTOMETRY_CATALOGUE_PATH, PHOTOMETRY_HDU)
+    
     # Define plotting parameters for aesthetic improvement
     z_errs = 0.0 # No redshift error available
-    MARKER_COLOR = '#1b7b3b' # Darker green for contrast
-    ERROR_BAR_COLOR = '#666666' # Light gray for minimal dominance
+    MARKER_COLOR_SPEC = '#1b7b3b' # Darker green for spectroscopic contrast
+    
+    # MODIFIED: Changed color to red and increased alpha for visibility
+    MARKER_COLOR_PHOTO = '#dc3545' # Red for photometric contrast
+    MARKER_SIZE_PHOTO = 3.0 # Slightly larger marker size for photometry
+    ALPHA_POINTS_PHOTO = 0.5 # Increased opacity
+    
+    ERROR_BAR_COLOR = '#666666' 
     MARKER_SIZE = 4
     CAP_SIZE = 2
     LINE_WIDTH = 0.5
-    ALPHA_POINTS = 0.8
+    ALPHA_POINTS_SPEC = 0.8
     ALPHA_ERRORS = 0.4
     
     # Set the style for better readability
     plt.style.use('default') 
 
-    # --------------------------------------
-    # 1. Plot Beta vs. M_UV (X and Y errors)
-    # --------------------------------------
+    # ----------------------------------------------------
+    # 1. Plot Beta vs. M_UV (Spectroscopy + Photometry Overlay)
+    # ----------------------------------------------------
     plt.figure(figsize=(10, 7))
-    # Use errorbar with reduced clutter and light error bar color
+    
+    # Layer 1: Photometric data (background)
+    if df_photo is not None and not df_photo.empty:
+        plt.scatter(df_photo['muv'], df_photo['beta'],
+                    # MODIFIED: Used new size variable
+                    s=MARKER_SIZE_PHOTO**2, 
+                    alpha=ALPHA_POINTS_PHOTO, 
+                    color=MARKER_COLOR_PHOTO, 
+                    marker='o', # Changed to a circle for better visibility
+                    # MODIFIED: Removed LaTeX formatting from label
+                    label='Photometry (~15,000 points)', 
+                    zorder=0) # Put behind everything else
+
+    # Layer 2: Spectroscopic error bars (uncertainty)
     plt.errorbar(df_data['muv'], df_data['beta'], 
                  xerr=df_data['muv_err'], yerr=df_data['beta_err'],
                  fmt='o', 
                  markersize=MARKER_SIZE, 
                  capsize=CAP_SIZE, 
-                 elinewidth=LINE_WIDTH, # Thin error lines
-                 alpha=ALPHA_ERRORS,    # Transparent error bars
+                 elinewidth=LINE_WIDTH,
+                 alpha=ALPHA_ERRORS,
                  ecolor=ERROR_BAR_COLOR, 
-                 markerfacecolor=MARKER_COLOR, # Marker color
+                 markerfacecolor=MARKER_COLOR_SPEC, 
                  markeredgecolor='k', 
                  markeredgewidth=0.5,
-                 zorder=1) # Error bars below points (for clarity)
+                 label='Spectroscopy w/ Errors',
+                 zorder=1) 
     
-    # Overlay the points again without error bars but with full opacity
-    # This makes the centers clearer while errors fade into the background
+    # Layer 3: Spectroscopic points (central measurement)
     plt.scatter(df_data['muv'], df_data['beta'], 
-                s=MARKER_SIZE*5, alpha=ALPHA_POINTS, 
-                color=MARKER_COLOR, edgecolors='k', linewidths=0.5, zorder=2)
+                s=MARKER_SIZE*5, alpha=ALPHA_POINTS_SPEC, 
+                color=MARKER_COLOR_SPEC, edgecolors='k', linewidths=0.5, 
+                zorder=2) # Put on top of error bars
     
-    plt.xlabel("Absolute UV Magnitude ($M_{UV}$) [AB mag]", fontsize=14)
-    plt.ylabel("UV Continuum Slope ($\\beta$)", fontsize=14)
-    plt.title(f"UV Slope vs. M_UV (N={len(df_data)})", fontsize=16)
-    plt.ylim(-3.0, 1.0)
-    plt.grid(alpha=0.2, linestyle='--') # Lighter grid lines
+    # MODIFIED: Removed LaTeX formatting from xlabel
+    plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
+    # MODIFIED: Removed LaTeX formatting from ylabel
+    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
+    # MODIFIED: Removed LaTeX formatting from title
+    plt.title(f"UV Slope vs. M_UV (Spectro N={len(df_data)})", fontsize=16)
+    
+    # X-axis not inverted, as requested
+    plt.ylim(-3.0, 1.0) 
+    plt.grid(alpha=0.2, linestyle='--') 
+    plt.legend(frameon=True, fontsize=10)
     plt.tight_layout()
     
-    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_improved.png"
-    plt.savefig(plot_path_beta_muv, dpi=300) # Increased DPI for better image quality
-    print(f"\nSaved improved Beta vs M_UV plot successfully to: {plot_path_beta_muv.resolve()}")
+    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_with_photo.png"
+    plt.savefig(plot_path_beta_muv, dpi=300) 
+    print(f"\nSaved Beta vs M_UV plot with photometric overlay successfully to: {plot_path_beta_muv.resolve()}")
     
     # 2. Plot M_UV vs. z (Y error only)
     plt.figure(figsize=(10, 7))
@@ -402,17 +465,19 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
                  zorder=1)
     
     plt.scatter(df_data['z'], df_data['muv'], 
-                s=MARKER_SIZE*5, alpha=ALPHA_POINTS, 
+                s=MARKER_SIZE*5, alpha=ALPHA_POINTS_SPEC, 
                 color='dodgerblue', edgecolors='k', linewidths=0.5, zorder=2)
                  
     plt.xlabel("Redshift (z)", fontsize=14)
-    plt.ylabel("Absolute UV Magnitude ($M_{UV}$) [AB mag]", fontsize=14) 
+    # MODIFIED: Removed LaTeX formatting from ylabel
+    plt.ylabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14) 
+    # MODIFIED: Removed LaTeX formatting from title
     plt.title(f"M_UV vs. Redshift (N={len(df_data)})", fontsize=16)
     plt.gca().invert_yaxis()
     plt.grid(alpha=0.2, linestyle='--')
     plt.tight_layout()
-    plt.savefig(output_dir / "muv_vs_z_plot_improved.png", dpi=300)
-    print(f"Saved improved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_improved.png').resolve()}")
+    plt.savefig(output_dir / "muv_vs_z_plot_improved_v2.png", dpi=300)
+    print(f"Saved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_improved_v2.png').resolve()}")
 
     # 3. Plot Beta vs. z (Y error only)
     plt.figure(figsize=(10, 7))
@@ -424,20 +489,22 @@ def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, 
                  zorder=1)
                  
     plt.scatter(df_data['z'], df_data['beta'], 
-                s=MARKER_SIZE*5, alpha=ALPHA_POINTS, 
+                s=MARKER_SIZE*5, alpha=ALPHA_POINTS_SPEC, 
                 color='firebrick', edgecolors='k', linewidths=0.5, zorder=2)
     
     plt.xlabel("Redshift (z)", fontsize=14)
-    plt.ylabel("UV Continuum Slope ($\\beta$)", fontsize=14)
-    plt.title(f"UV Slope ($\\beta$) vs. Redshift (N={len(df_data)})", fontsize=16)
+    # MODIFIED: Removed LaTeX formatting from ylabel
+    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
+    # MODIFIED: Removed LaTeX formatting from title
+    plt.title(f"UV Slope (Beta) vs. Redshift (N={len(df_data)})", fontsize=16)
     
     plt.ylim(-3.0, 1.0) 
     plt.grid(alpha=0.2, linestyle='--')
     plt.tight_layout()
     
-    plot_path_beta = output_dir / "beta_vs_z_plot_improved.png"
+    plot_path_beta = output_dir / "beta_vs_z_plot_improved_v2.png"
     plt.savefig(plot_path_beta, dpi=300)
-    print(f"Saved improved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
+    print(f"Saved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
     
     # Save the final combined data including errors (using the original filename convention)
     csv_path_out = output_dir / "muv_beta_z_results_with_errs.csv"
