@@ -12,67 +12,63 @@ from scipy.integrate import simpson
 from scipy.optimize import curve_fit
 
 # --- CONSTANTS ---
-C_LIGHT_AA_PER_S = 2.99792458e18 
+import matplotlib as mpl
+mpl.rcParams.update({
+    "font.size": 20,
+    "axes.titlesize": 20,
+    "axes.labelsize": 20,
+    "xtick.labelsize": 16,
+    "ytick.labelsize": 16,
+    "legend.fontsize": 18,
+    "figure.titlesize": 20,
+    "axes.linewidth": 1.4,
+    "xtick.major.width": 1.2,
+    "ytick.major.width": 1.2,
+    "xtick.major.size": 6,
+    "ytick.major.size": 6,
+    "lines.linewidth": 1.6,
+    "savefig.dpi": 300,
+    # Ensure mathtext is used for labels
+    "text.usetex": False, 
+    "mathtext.fontset": "cm" 
+})
+
+C_LIGHT_AA_PER_S = 2.99792458e18
 AB_MAG_ZP_JY = 8.90
-W_UV_MIN = 1350.0 
+W_UV_MIN = 1350.0
 W_UV_MAX = 1800.0
 cosmo = Planck18
 
-# --- BETA CALCULATION CONSTANTS (Calzetti+1994 Filter Definitions) ---
-# Use the explicit C94 filter boundaries provided by the user. These are REST-FRAME wavelengths.
 LOWER_C94_FILT = np.array([1268., 1309., 1342., 1407., 1562., 1677., 1760., 1866., 1930., 2400.])
 UPPER_C94_FILT = np.array([1284., 1316., 1371., 1515., 1583., 1740., 1833., 1890., 1950., 2580.])
 
-# --- CONFIGURATION ---
 SPECTRA_BASE_DIR = "/raid/scratch/work/Griley/GALFIND_WORK/Spectra/2D"
 CSV_PATH_GLOBAL = Path("./mphys_GOODS_S_exposures.csv")
-OUTPUT_DIR = Path.cwd() / "MUV_plots"
-EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/uv_snr_5plus.csv") 
+OUTPUT_DIR = Path.cwd() / "MUV_plots_40"
+EXTERNAL_SNR_CSV_PATH = Path("/nvme/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/uv_snr5plus_with_prism_and_medium.csv")
+TARGET_CSV = Path("/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/specFitMSA/data/project_mphys_ultrablue/HeII_Ha_high_SNR_allgratings.csv")
 
-# NEW CONSTANT FOR PHOTOMETRIC CATALOGUE
-PHOTOMETRY_CATALOGUE_PATH = "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits"
-# PHOTOMETRY_HDU constant removed as two HDUs are now required.
+# Defined Photometry Catalogues (South and East)
+PHOTOMETRY_CAT_SOUTH = Path("/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits")
+PHOTOMETRY_CAT_EAST = Path("/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-East/(0.32)as/JADES-DR3-GS-East_MASTER_Sel-F277W+F356W+F444W_v13.fits")
 
-
-# ----------------------------------------------------------------------
-## FILTERING HELPERS (Refactored to load SNR map)
-# ----------------------------------------------------------------------
-
-def load_snr_values(snr_csv_path: Path) -> Optional[Dict[str, float]]:
-    """
-    Loads the external SNR CSV and returns a dictionary mapping filename to its SNR value.
-    This also serves as the file filter.
-    """
-    if not snr_csv_path.exists():
-        print(f"Warning: SNR filter file not found at {snr_csv_path}. Proceeding without SNR filter.")
-        return None 
-        
-    try:
-        # Assuming the CSV contains 'file' (str) and 'snr' (float) columns
-        df_snr = pd.read_csv(snr_csv_path, usecols=['file', 'avg_snr_uv'])
-        
-        # Convert to dictionary for fast lookup: {'filename': snr_value}
-        snr_map = df_snr.set_index('file')['avg_snr_uv'].to_dict()
-        
-        print(f"Loaded {len(snr_map)} filenames and their SNR values from the external CSV.")
-        return snr_map
-        
-    except Exception as e:
-        print(f"Error reading or filtering SNR file: {e}")
-        return None
-
-# ----------------------------------------------------------------------
-## I/O & TRANSFORMATION HELPERS (Reused)
-# ----------------------------------------------------------------------
-
-def find_prism_fits(base_dir: str) -> List[Path]:
-    """Recursively find all FITS files with 'prism' in the filename."""
-    fits_files = []
-    for root, dirs, files in os.walk(base_dir):
-        for f in files:
-            if f.endswith(".fits") and "prism" in f:
-                fits_files.append(Path(os.path.join(root, f)))
-    return fits_files
+# -----------------------------------------------------------
+# Load the 39 target IDs
+# -----------------------------------------------------------
+def load_target_object_ids(csv_path: Path) -> Set[int]:
+    target_ids = set()
+    with open(csv_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.lower().startswith("object_id"):
+                continue
+            first = line.split(",", 1)[0].strip()
+            try:
+                target_ids.add(int(first))
+            except:
+                continue
+    print(f"Loaded {len(target_ids)} target IDs.")
+    return target_ids
 
 def get_redshift_from_csv(csv_file: Path, fits_file: Path) -> Optional[float]:
     """Look up the redshift 'z' for a given FITS filename."""
@@ -87,550 +83,356 @@ def get_redshift_from_csv(csv_file: Path, fits_file: Path) -> Optional[float]:
                     return None
     return None
 
-def read_observed_spectrum(fits_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Read observed-frame spectrum columns from a 1D FITS table."""
-    with fits.open(fits_path) as hdul:
-        data = hdul[1].data
-        wave_obs = np.array(data["wave"])
-        flux_obs = np.array(data["flux"])
-        err_obs = np.array(data["err"] if "err" in data.columns.names else data["full_err"])
-    return wave_obs, flux_obs, err_obs
 
-def get_rest_frame_spectrum(wave_obs_um: np.ndarray, flux_obs_uJy: np.ndarray, 
-                            err_obs_uJy: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Converts observed spectrum (µm, µJy) to rest-frame (Å, erg/s/cm2/Å)."""
-    lam_obs_AA  = wave_obs_um * 1e4
-    lam_rest_AA = lam_obs_AA / (1.0 + z)
-
-    factor = 1e-29 * C_LIGHT_AA_PER_S
-    Flam_obs = flux_obs_uJy * factor / (lam_obs_AA**2)
-    Elam_obs = err_obs_uJy   * factor / (lam_obs_AA**2)
-
-    w = lam_rest_AA
-    f = (1.0 + z)**2 * Flam_obs
-    e = (1.0 + z)**2 * Elam_obs
-
-    idx = np.argsort(w)
-    w, f, e = w[idx], f[idx], e[idx]
-    keep = np.isfinite(w) & np.isfinite(f) & np.isfinite(e) & (e >= 0)
-    
-    return w[keep], f[keep], e[keep]
-
-def load_photometric_data(fits_path: str) -> Optional[pd.DataFrame]:
+# -----------------------------------------------------------
+# Load Photometric Background (FIXED ERROR LOGIC)
+# -----------------------------------------------------------
+def load_photometric_background(cat_paths: List[Path]) -> pd.DataFrame:
     """
-    Loads photometric Beta and M_UV data from two different HDUs (4 and 6), 
-    including 16th/84th percentiles for errors.
+    Loads M_UV and Beta. 
+    Calculates M_UV errors from percentiles (distance from median).
+    Uses Beta l1/u1 directly as errors.
     """
-    try:
-        if not Path(fits_path).exists():
-            print(f"Warning: Photometric catalogue not found at {fits_path}.")
-            return None
-            
-        # --- HDU Indices (0-based) ---
-        # Note: HDU 4 is index 3, HDU 6 is index 5.
-        MUV_HDU_INDEX = 4  # Corresponds to HDU 4
-        BETA_HDU_INDEX = 6 # Corresponds to HDU 6
+    data_frames = []
 
-        # Open FITS file with parameters to handle byte order issues
-        with fits.open(fits_path, do_not_scale_image_data=True, uint=False) as hdul:
-            
-            # Load Data from two different HDUs
-            data_muv = hdul[MUV_HDU_INDEX].data 
-            data_beta = hdul[BETA_HDU_INDEX].data 
-            
-            # --- Column Names ---
-            MUV_COL = 'M_UV_50'
-            BETA_COL = 'beta_[1250,3000]AA_0.32as' 
-            
-            # Use data_muv for M_UV columns and data_beta for Beta columns
+    for path in cat_paths:
+        if not path.exists():
+            print(f"Warning: Photometry file not found: {path}")
+            continue
+        
+        print(f"Loading photometry from: {path.name}")
+        with fits.open(path) as hdul:
+            # --- Extract M_UV (HDU 4) ---
             try:
-                # MUV columns from HDU 4 data
-                muv_50 = data_muv[MUV_COL].byteswap().newbyteorder()
-                muv_16 = data_muv['M_UV_16'].byteswap().newbyteorder()
-                muv_84 = data_muv['M_UV_84'].byteswap().newbyteorder()
-                
-                # BETA columns from HDU 6 data
-                beta_50 = data_beta[BETA_COL].byteswap().newbyteorder()
-                beta_16 = data_beta[BETA_COL + '_l1'].byteswap().newbyteorder()
-                beta_84 = data_beta[BETA_COL + '_u1'].byteswap().newbyteorder()
-            except AttributeError:
-                # Fallback if byteswap() fails
-                print("Warning: Byte-swapping failed, attempting to read arrays directly.")
-                muv_50 = data_muv[MUV_COL]
+                data_muv = hdul[4].data
+                muv_50 = data_muv['M_UV_50']
                 muv_16 = data_muv['M_UV_16']
                 muv_84 = data_muv['M_UV_84']
-                
-                beta_50 = data_beta[BETA_COL]
-                beta_16 = data_beta[BETA_COL + '_l1']
-                beta_84 = data_beta[BETA_COL + '_u1']
-            
-            # Ensure catalogs have the same length before proceeding
-            if len(muv_50) != len(beta_50):
-                 print(f"Error: M_UV (HDU {MUV_HDU_INDEX+1}) and Beta (HDU {BETA_HDU_INDEX+1}) tables have different lengths. Aborting load.")
-                 return None
-
-
-            # Calculate ASYMMETRIC ERRORS relative to the median (50th percentile)
-            # M_UV is a magnitude: brighter (more negative) is usually smaller index (16th)
-            muv_err_low = muv_50 - muv_16  # Distance from median to 16th percentile (lower magnitude side)
-            muv_err_high = muv_84 - muv_50 # Distance from median to 84th percentile (higher magnitude side)
-            
-            # Beta is a slope: lower index (16th) is lower beta
-            beta_err_low = beta_16 
-            beta_err_high = beta_84
-            
-            # Combine into a DataFrame
-            df_photo = pd.DataFrame({
-                'muv': muv_50, 
-                'beta': beta_50,
-                'muv_err_low': muv_err_low,
-                'muv_err_high': muv_err_high,
-                'beta_err_low': beta_err_low,
-                'beta_err_high': beta_err_high,
-            })
-            
-            # Filter out NaNs/Infs from primary values and ensure errors are sensible
-            df_photo = df_photo.replace([np.inf, -np.inf], np.nan).dropna(subset=['muv', 'beta'])
-            
-            print(f"Loaded {len(df_photo)} valid photometric Beta/M_UV points using HDU {MUV_HDU_INDEX+1} (M_UV) and HDU {BETA_HDU_INDEX+1} (Beta).")
-            return df_photo
-            
-    except Exception as e:
-        print(f"Error loading photometric catalogue from {fits_path}: {e}")
-        return None
-
-
-# ----------------------------------------------------------------------
-## MUV & BETA CALCULATION HELPERS
-# ----------------------------------------------------------------------
-
-def calculate_integral_error(w_window: np.ndarray, e_window: np.ndarray) -> float:
-    """
-    Calculates the error on the integrated flux (dI) using quadrature: 
-    dI^2 ~ Sum (e_i * dw_i)^2, where dw_i are the wavelength steps.
-    """
-    if len(w_window) < 2:
-        return np.nan
-        
-    # Approximate wavelength steps dw_i
-    dw = np.diff(w_window, prepend=w_window[0], append=w_window[-1])
-    dw_i = (dw[:-1] + dw[1:]) / 2.0
-    
-    # Simple weighted quadrature sum (dI^2)
-    dI_sq = np.sum((e_window * dw_i)**2)
-    return np.sqrt(dI_sq)
-
-
-def calculate_muv_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, 
-                            e_rest_flambda: np.ndarray, z: float, 
-                            w_min: float = W_UV_MIN, w_max: float = W_UV_MAX) -> tuple[Optional[float], Optional[float]]:
-    """
-    Calculates M_UV (Absolute AB Magnitude) and its error (Delta M_UV).
-    """
-    
-    is_UV = (w_rest >= w_min) & (w_rest <= w_max)
-    
-    if not is_UV.any():
-        return None, None
-    
-    w_window = w_rest[is_UV]
-    f_window = f_rest_flambda[is_UV]
-    e_window = e_rest_flambda[is_UV]
-    
-    valid_mask = np.isfinite(f_window) & np.isfinite(e_window) & (e_window >= 0)
-    w_window = w_window[valid_mask]
-    f_window = f_window[valid_mask]
-    e_window = e_window[valid_mask]
-
-    if len(w_window) < 2:
-        return None, None
-
-    # --- M_UV CALCULATION ---
-    integral_flam = simpson(f_window, x=w_window)
-    bandpass_width = w_max - w_min
-    Flam_UV_mean = integral_flam / bandpass_width
-    
-    if Flam_UV_mean <= 0:
-        return None, None
-        
-    lambda_eff = (w_min + w_max) / 2.0
-    
-    F_nu_cgs = Flam_UV_mean * (lambda_eff**2 / C_LIGHT_AA_PER_S)
-    F_nu_Jy = F_nu_cgs / 1e-23
-    
-    m_UV_AB = -2.5 * np.log10(F_nu_Jy) + AB_MAG_ZP_JY 
-    
-    dL_pc = cosmo.luminosity_distance(z).to(au.pc).value
-    DM = 5.0 * (np.log10(dL_pc) - 1.0) 
-    K = -2.5 * np.log10(1 + z)
-    
-    M_UV_AB = m_UV_AB - DM - K
-
-    # --- Delta M_UV CALCULATION ---
-    integral_flam_err = calculate_integral_error(w_window, e_window)
-    Flam_UV_mean_err = integral_flam_err / bandpass_width
-    
-    # Magnitude error formula: Delta M = 1.0857 * (Delta F / F)
-    delta_M_UV = (2.5 / np.log(10)) * (Flam_UV_mean_err / Flam_UV_mean)
-    
-    if not np.isfinite(delta_M_UV) or delta_M_UV < 0:
-        return M_UV_AB, None
-
-    return M_UV_AB, delta_M_UV
-
-
-# Note: calculate_snr_uv_window has been removed as SNR is loaded from the CSV.
-
-
-# ----------------------------------------------------------------------
-## BETA CALCULATION FUNCTIONS (Modified to include error)
-# ----------------------------------------------------------------------
-
-def beta_slope_power_law_func(log_w, log_a, beta):
-    """Log-linear form for power law fit: log(F_lambda) = log(a) + beta * log(lambda)."""
-    return log_a + beta * log_w
-
-def sample_spectrum_C94(w_rest: np.ndarray, f_rest: np.ndarray, e_rest: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Samples the median F_lambda and the error on the median (sigma/sqrt(N)) 
-    within the 10 standard C94 rest-frame UV filters.
-    """
-    sampled_waves = []
-    sampled_fluxes = []
-    sampled_errors = []
-
-    for w_min, w_max in zip(LOWER_C94_FILT, UPPER_C94_FILT):
-        mask = (w_rest >= w_min) & (w_rest <= w_max)
-        
-        if np.sum(mask) == 0:
-            continue
-            
-        f_window = f_rest[mask]
-        e_window = e_rest[mask]
-        
-        valid_points = np.isfinite(f_window) & np.isfinite(e_window) & (f_window > 0)
-        
-        if np.sum(valid_points) < 2:
-            continue
-
-        f_window = f_window[valid_points]
-        e_window = e_window[valid_points]
-        N = len(f_window)
-
-        median_flux = np.median(f_window)
-        # Error on the sampled flux: use the standard error of the mean error 
-        median_error = np.median(e_window) / np.sqrt(N) 
-        
-        if median_flux > 0:
-            sampled_waves.append((w_min + w_max) / 2.0)
-            sampled_fluxes.append(median_flux)
-            sampled_errors.append(median_error)
-
-    return np.array(sampled_waves), np.array(sampled_fluxes), np.array(sampled_errors)
-
-
-def calculate_beta_and_error(w_rest: np.ndarray, f_rest_flambda: np.ndarray, e_rest_flambda: np.ndarray) -> tuple[Optional[float], Optional[float]]:
-    """
-    Calculates the UV continuum slope (beta) and its error by fitting a power law 
-    using fluxes and errors sampled in the C94 filter bands.
-    """
-    # 1. Sample the spectrum using the C94 filter windows
-    sampled_waves, sampled_fluxes, sampled_errors = sample_spectrum_C94(w_rest, f_rest_flambda, e_rest_flambda)
-
-    # 2. Check for sufficient data points
-    if len(sampled_waves) < 2:
-        return None, None
-
-    # 3. Calculate errors in log space: Delta log(F) = 1.0857 * (Delta F / F)
-    valid_mask = (sampled_fluxes > 0) & (sampled_errors > 0) & np.isfinite(sampled_errors)
-    if np.sum(valid_mask) < 2:
-         return None, None
-
-    sampled_waves = sampled_waves[valid_mask]
-    sampled_fluxes = sampled_fluxes[valid_mask]
-    sampled_errors = sampled_errors[valid_mask]
-    
-    # Delta log(F) = (2.5 / ln(10)) * (Delta F / F)
-    log_flux_errors = (2.5 / np.log(10)) * (sampled_errors / sampled_fluxes)
-    
-    # 4. Perform the log-linear fit
-    try:
-        popt, pcov = curve_fit(
-            beta_slope_power_law_func, 
-            np.log10(sampled_waves), 
-            np.log10(sampled_fluxes),
-            sigma=log_flux_errors,       # Pass uncertainties
-            absolute_sigma=True,         # Treat sigma as absolute errors
-            p0=[0, -2.0], 
-            maxfev=5000
-        )
-        
-        beta = popt[1]
-        
-        # Calculate error on beta: sqrt(covariance matrix diagonal element pcov[1, 1])
-        beta_err = np.sqrt(pcov[1, 1])
-        
-        if np.isfinite(beta) and np.isfinite(beta_err):
-             return beta, beta_err
-        else:
-            return None, None
-
-    except Exception:
-        return None, None # Fit failed
-
-# ----------------------------------------------------------------------
-## MAIN EXECUTION AND PLOTTING (Modified to improve aesthetics and add photometry)
-# ----------------------------------------------------------------------
-
-def process_and_plot_beta_vs_z(base_dir: str, csv_path: Path, output_dir: Path, snr_filter_path: Path):
-    """
-    Main function to calculate MUV/Beta/Errors/SNR, plot results, and save data.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    fits_files = find_prism_fits(base_dir)
-    muv_beta_data = [] 
-    
-    # MODIFIED: Load SNR map instead of just filter files
-    snr_map = load_snr_values(snr_filter_path)
-    if snr_map is None:
-        # If the SNR map fails to load, we can't filter/analyze SNR, so we exit.
-        print("Cannot proceed with SNR analysis as external CSV could not be loaded.")
-        return 
-
-    total_files = len(fits_files)
-    print(f"Total initial FITS files found: {total_files}")
-
-    for i, fits_path in enumerate(fits_files):
-        file_name = fits_path.name
-        progress = f"{i + 1}/{total_files} computed"
-        
-        # Use the SNR map for implicit filtering
-        if file_name not in snr_map:
-            continue
-
-        try:
-            z = get_redshift_from_csv(csv_path, fits_path)
-            
-            if z is None or not np.isfinite(z):
+            except KeyError as e:
+                print(f"KeyError in HDU 4 for {path.name}: {e}")
                 continue
 
-            wave_obs, flux_obs, err_obs = read_observed_spectrum(fits_path)
-            w_rest, f_rest, e_rest = get_rest_frame_spectrum(wave_obs, flux_obs, err_obs, z)
-            
-            # Use the new functions to get values AND errors
-            muv, muv_err = calculate_muv_and_error(w_rest, f_rest, e_rest, z)
-            beta, beta_err = calculate_beta_and_error(w_rest, f_rest, e_rest)
-            
-            # FETCH SNR from the map instead of calculating it
-            snr = snr_map.get(file_name) 
-            
-            # Only keep points where both values AND errors are valid
-            valid_muv_beta = (muv is not None and beta is not None and 
-                              muv_err is not None and beta_err is not None and snr is not None and
-                              np.isfinite(muv) and np.isfinite(beta) and 
-                              np.isfinite(muv_err) and np.isfinite(beta_err) and np.isfinite(snr))
+            # --- Extract Beta (HDU 6) ---
+            try:
+                data_beta = hdul[6].data
+                beta_col_name = "beta_[1250,3000]AA_0.32as"
+                
+                beta_50 = data_beta[beta_col_name]
+                # Assuming these are already ERROR DISTANCES based on user input
+                beta_l1 = data_beta[f"{beta_col_name}_l1"]
+                beta_u1 = data_beta[f"{beta_col_name}_u1"]
+            except KeyError as e:
+                 print(f"KeyError in HDU 6 for {path.name}: {e}")
+                 continue
 
-            if valid_muv_beta:
-                muv_beta_data.append({
-                    'z': z, 
-                    'muv': muv, 
-                    'beta': beta, 
-                    'muv_err': muv_err,
-                    'beta_err': beta_err,
-                    'snr': snr, # Store pre-calculated SNR
-                    'file': file_name
-                })
+            df_temp = pd.DataFrame({
+                'muv': muv_50,
+                'muv_16': muv_16,
+                'muv_84': muv_84,
+                'beta': beta_50,
+                'beta_l1': beta_l1,
+                'beta_u1': beta_u1
+            })
             
-        except Exception as e:
-            # print(f"[{progress}] Error processing {fits_path.name}: {e}")
-            pass 
+            df_temp = df_temp.replace([np.inf, -np.inf], np.nan).dropna()
+            data_frames.append(df_temp)
 
-    # --- Plotting & Analysis ---
-    if not muv_beta_data:
-        print("\nNo valid MUV/Beta data points to plot after filtering. Exiting.")
+    if not data_frames:
+        return pd.DataFrame()
+
+    combined_df = pd.concat(data_frames, ignore_index=True)
+    
+    # --- Calculate Errors ---
+    
+    # M_UV: Still assuming these are percentiles (absolute values)
+    combined_df['muv_err_low'] = np.abs(combined_df['muv'] - combined_df['muv_16'])
+    combined_df['muv_err_high'] = np.abs(combined_df['muv_84'] - combined_df['muv'])
+    
+    # Beta: User confirmed these are uncertainties (approx 0.5), use DIRECTLY.
+    combined_df['beta_err_low'] = combined_df['beta_l1']
+    combined_df['beta_err_high'] = combined_df['beta_u1']
+
+    # --- FILTERING ---
+    print(f"Photometry size before cleaning: {len(combined_df)}")
+    
+    # 1. Physical limits
+    combined_df = combined_df[(combined_df['beta'] > -5.0) & (combined_df['beta'] < 5.0)]
+    
+    # 2. Error size cuts (Remove unconstrained fits)
+    # We only plot points with reasonable error bars to match your clean plot
+    error_threshold = 1.0
+    mask_good_errors = (
+        (combined_df['beta_err_low'] < error_threshold) & 
+        (combined_df['beta_err_high'] < error_threshold) &
+        (combined_df['muv_err_low'] < 1.0) & 
+        (combined_df['muv_err_high'] < 1.0)
+    )
+    combined_df = combined_df[mask_good_errors]
+    
+    print(f"Photometry size after cleaning: {len(combined_df)}")
+
+    return combined_df
+
+# -----------------------------------------------------------
+# Load SNR map
+# -----------------------------------------------------------
+def load_snr_values(path: Path):
+    df = pd.read_csv(path, usecols=["prism_file", "avg_snr_uv"])
+    return df.set_index("prism_file")["avg_snr_uv"].to_dict()
+
+
+# -----------------------------------------------------------
+# Find prism FITS files
+# -----------------------------------------------------------
+def find_prism_fits(base_dir):
+    all_files = []
+    for root, _, files in os.walk(base_dir):
+        for f in files:
+            if f.endswith(".fits") and "prism" in f:
+                all_files.append(Path(root) / f)
+    return all_files
+
+
+# -----------------------------------------------------------
+# Read spectrum
+# -----------------------------------------------------------
+def read_observed_spectrum(fpath):
+    with fits.open(fpath) as hdul:
+        data = hdul[1].data
+        wave = np.array(data["wave"])
+        flux = np.array(data["flux"])
+        err = np.array(data["err"] if "err" in data.columns.names else data["full_err"])
+    return wave, flux, err
+
+
+# -----------------------------------------------------------
+# Convert to rest-frame
+# -----------------------------------------------------------
+def get_rest_frame_spectrum(wave_obs_um, flux_obs_uJy, err_obs_uJy, z):
+    lam_obs_AA = wave_obs_um * 1e4
+    lam_rest = lam_obs_AA / (1+z)
+
+    factor = 1e-29 * C_LIGHT_AA_PER_S
+    flam = flux_obs_uJy * factor / (lam_obs_AA**2)
+    elam = err_obs_uJy * factor / (lam_obs_AA**2)
+
+    idx = np.argsort(lam_rest)
+    lam_rest, flam, elam = lam_rest[idx], flam[idx], elam[idx]
+
+    keep = np.isfinite(lam_rest) & np.isfinite(flam) & np.isfinite(elam) & (elam >= 0)
+    return lam_rest[keep], flam[keep], elam[keep]
+
+
+# -----------------------------------------------------------
+# Compute MUV
+# -----------------------------------------------------------
+def calculate_integral_error(w, e):
+    if len(w) < 2:
+        return np.nan
+    dw = np.diff(w, prepend=w[0], append=w[-1])
+    dw_i = (dw[:-1] + dw[1:]) / 2.0
+    return np.sqrt(np.sum((e * dw_i)**2))
+
+
+def calculate_muv_and_error(w_rest, f_rest, e_rest, z):
+    mask = (w_rest >= W_UV_MIN) & (w_rest <= W_UV_MAX)
+    if not mask.any():
+        return None, None
+    w, f, e = w_rest[mask], f_rest[mask], e_rest[mask]
+
+    ok = np.isfinite(f) & np.isfinite(e) & (e >= 0)
+    w, f, e = w[ok], f[ok], e[ok]
+
+    if len(w) < 2:
+        return None, None
+
+    integral = simpson(f, x=w)
+    Flam_mean = integral / (W_UV_MAX - W_UV_MIN)
+    if Flam_mean <= 0:
+        return None, None
+
+    lam_eff = 0.5 * (W_UV_MIN + W_UV_MAX)
+    F_nu = Flam_mean * (lam_eff**2 / C_LIGHT_AA_PER_S)
+    F_Jy = F_nu / 1e-23
+    mUV = -2.5*np.log10(F_Jy) + AB_MAG_ZP_JY
+
+    dL = cosmo.luminosity_distance(z).to(au.pc).value
+    MUV = mUV - 5*(np.log10(dL) - 1) - 2.5*np.log10(1+z)
+
+    # error
+    integral_err = calculate_integral_error(w, e)
+    Flam_err = integral_err / (W_UV_MAX - W_UV_MIN)
+    delta_M = (2.5/np.log(10)) * (Flam_err/Flam_mean)
+
+    return MUV, delta_M
+
+
+# -----------------------------------------------------------
+# Compute Beta
+# -----------------------------------------------------------
+def sample_spectrum_C94(w, f, e):
+    waves, fluxes, errs = [], [], []
+    for wmin, wmax in zip(LOWER_C94_FILT, UPPER_C94_FILT):
+        mask = (w>=wmin)&(w<=wmax)
+        if not mask.any():
+            continue
+        fw, ew = f[mask], e[mask]
+        ok = (fw>0)&np.isfinite(fw)&np.isfinite(ew)
+        if ok.sum() < 2:
+            continue
+        median_flux = np.median(fw[ok])
+        median_err = np.median(ew[ok]) / np.sqrt(ok.sum())
+        waves.append((wmin+wmax)/2)
+        fluxes.append(median_flux)
+        errs.append(median_err)
+    return np.array(waves), np.array(fluxes), np.array(errs)
+
+
+def calculate_beta_and_error(w, f, e):
+    waves, fluxes, errs = sample_spectrum_C94(w, f, e)
+    if len(waves) < 2:
+        return None, None
+    ok = (fluxes>0)&(errs>0)
+    if ok.sum() < 2:
+        return None, None
+    waves, fluxes, errs = waves[ok], fluxes[ok], errs[ok]
+    log_err = (2.5 / np.log(10)) * (errs/fluxes)
+    try:
+        popt, pcov = curve_fit(
+            lambda lw, a, b: a + b*lw,
+            np.log10(waves),
+            np.log10(fluxes),
+            sigma=log_err,
+            absolute_sigma=True,
+            p0=[0,-2]
+        )
+        beta = popt[1]
+        beta_err = np.sqrt(pcov[1,1])
+        return beta, beta_err
+    except:
+        return None, None
+
+
+# -----------------------------------------------------------
+# MAIN
+# -----------------------------------------------------------
+def process_and_plot():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    target_ids = load_target_object_ids(TARGET_CSV)
+    snr_map = load_snr_values(EXTERNAL_SNR_CSV_PATH)
+    fits_files = find_prism_fits(SPECTRA_BASE_DIR)
+
+    # --- Load Photometric Background Data ---
+    print("Loading photometric background data...")
+    df_photo = load_photometric_background([PHOTOMETRY_CAT_SOUTH, PHOTOMETRY_CAT_EAST])
+
+    # --- Process Spectroscopic Data ---
+    results = []
+    for fpath in fits_files:
+        fname = fpath.name
+        try:
+            object_id = int(fname.split("_")[-1].split(".")[0])
+        except:
+            continue
+
+        if object_id not in target_ids:
+            continue
+        if fname not in snr_map:
+            continue
+        
+
+        z = get_redshift_from_csv(CSV_PATH_GLOBAL, fpath)
+        if z is None or not np.isfinite(z):
+            continue
+            
+        wave, flux, err = read_observed_spectrum(fpath)
+        w_rest, f_rest, e_rest = get_rest_frame_spectrum(wave, flux, err, z)
+
+        MUV, MUV_err = calculate_muv_and_error(w_rest, f_rest, e_rest, z)
+        beta, beta_err = calculate_beta_and_error(w_rest, f_rest, e_rest)
+
+        if MUV is None or not np.isfinite(MUV_err) or beta is None or not np.isfinite(beta_err):
+            continue
+
+
+        results.append({
+            "prism_file": fname,
+            "object_id": object_id,
+            "z": z,
+            "muv": MUV,
+            "muv_err": MUV_err,
+            "beta": beta,
+            "beta_err": beta_err,
+            "snr": snr_map[fname]
+        })
+
+    if not results:
+        print("No valid data to plot.")
         return
 
-    df_data = pd.DataFrame(muv_beta_data)
-    
-    # ----------------------------------------------------------------
-    # SNR ANALYSIS: Find the 5 highest (closest to 0) M_UV points
-    # ----------------------------------------------------------------
-    
-    # 1. Filter for the M_UV range [-15.5, -14.0]
-    muv_min = -15.5
-    muv_max = -14.0
-    df_faint_subset = df_data[(df_data['muv'] >= muv_min) & (df_data['muv'] <= muv_max)].copy()
-    
-    if df_faint_subset.empty:
-        print(f"\nNo spectroscopic points found in the range M_UV = [{muv_min}, {muv_max}].")
-    else:
-        # 2. Sort by M_UV (ascending: from -15.5 up to -14.0)
-        # Note: A higher M_UV value (closer to -14.0) means a fainter galaxy.
-        df_faint_subset = df_faint_subset.sort_values(by='muv', ascending=True)
+    df = pd.DataFrame(results)
+    print(df)
 
-        # 3. Get the top 5 faintest (highest M_UV) points
-        top_5_faintest = df_faint_subset.head(5)
-
-        # 4. Print the results
-        print(f"\n--- SNR for 5 Faintest Galaxies (M_UV $\in$ [{muv_min}, {muv_max}]) ---")
-        for index, row in top_5_faintest.iterrows():
-            print(f"File: {row['file']}, M_UV: {row['muv']:.2f}, SNR: {row['snr']:.2f}")
-        print("--------------------------------------------------------------------")
-
+    # ================== PLOTS ======================
     
-    # NEW STEP: Load Photometric Data (now without HDU index argument)
-    df_photo = load_photometric_data(PHOTOMETRY_CATALOGUE_PATH)
+    # PLOT 1: Beta vs M_UV (with Photometric Background)
+    plt.figure(figsize=(10,7))
     
-    # Define plotting parameters for aesthetic improvement
-    z_errs = 0.0 # No redshift error available
-    MARKER_COLOR_SPEC = '#1b7b3b' # Darker green for spectroscopic contrast
+    # -- Photometry Overlay --
+    if not df_photo.empty:
+        plt.errorbar(
+            df_photo['muv'], 
+            df_photo['beta'],
+            xerr=[df_photo['muv_err_low'], df_photo['muv_err_high']],
+            yerr=[df_photo['beta_err_low'], df_photo['beta_err_high']],
+            fmt='o',
+            color='#dc3545',       # Pale red
+            markersize=2,
+            alpha=0.3,             # Transparency
+            elinewidth=0.5,        # Very thin lines
+            zorder=0,              # Background layer
+            label='JADES Photometry'
+        )
     
-    # MODIFIED: Changed color to red and increased alpha for visibility
-    MARKER_COLOR_PHOTO = '#dc3545' # Red for photometric contrast
-    MARKER_SIZE_PHOTO = 3.0 # Slightly larger marker size for photometry
-    ALPHA_POINTS_PHOTO = 0.5 # Increased opacity
-    
-    ERROR_BAR_COLOR = '#666666' 
-    MARKER_SIZE = 4
-    CAP_SIZE = 2
-    LINE_WIDTH = 0.5
-    ALPHA_POINTS_SPEC = 0.8
-    ALPHA_ERRORS = 0.4
-    
-    # Set the style for better readability
-    plt.style.use('default') 
-
-    # ----------------------------------------------------
-    # 1. Plot Beta vs. M_UV (Spectroscopy + Photometry Overlay)
-    # ----------------------------------------------------
-    plt.figure(figsize=(10, 7))
-    
-    # Layer 1: Photometric error bars (asymmetric)
-    if df_photo is not None and not df_photo.empty:
-        # Assemble the asymmetric error arrays for errorbar plotting
-        muv_errs_photo = [df_photo['muv_err_low'].values, df_photo['muv_err_high'].values]
-        beta_errs_photo = [df_photo['beta_err_low'].values, df_photo['beta_err_high'].values]
-        
-        # Plot Photometric Error Bars
-        plt.errorbar(df_photo['muv'], df_photo['beta'],
-                     xerr=muv_errs_photo,
-                     yerr=beta_errs_photo,
-                     fmt='o', 
-                     markersize=MARKER_SIZE_PHOTO,
-                     capsize=1, # Very small capsize for densely packed errors
-                     elinewidth=0.2, # Very thin lines
-                     alpha=ALPHA_POINTS_PHOTO, # Use point alpha for transparency
-                     ecolor=MARKER_COLOR_PHOTO, # Pale red lines
-                     markerfacecolor= MARKER_COLOR_PHOTO, # No marker center needed
-                     markeredgecolor=MARKER_COLOR_PHOTO,
-                     markeredgewidth=0.3, # Thin edge around the marker
-                     label='Photometry w/ Errors', 
-                     zorder=0) 
-
-    # Layer 2: Spectroscopic error bars (uncertainty)
-    plt.errorbar(df_data['muv'], df_data['beta'], 
-                 xerr=df_data['muv_err'], yerr=df_data['beta_err'],
-                 fmt='o', 
-                 markersize=MARKER_SIZE, 
-                 capsize=CAP_SIZE, 
-                 elinewidth=LINE_WIDTH,
-                 alpha=ALPHA_ERRORS,
-                 ecolor=ERROR_BAR_COLOR, 
-                 markerfacecolor=MARKER_COLOR_SPEC, 
-                 markeredgecolor='k', 
-                 markeredgewidth=0.5,
-                 label='Spectroscopy w/ Errors',
-                 zorder=1) 
-    
-    # Layer 3: Spectroscopic points (central measurement)
-    plt.scatter(df_data['muv'], df_data['beta'], 
-                s=MARKER_SIZE*5, alpha=ALPHA_POINTS_SPEC, 
-                color=MARKER_COLOR_SPEC, edgecolors='k', linewidths=0.5, 
-                zorder=2) # Put on top of error bars
-    
-    # MODIFIED: Removed LaTeX formatting from xlabel
-    plt.xlabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14)
-    # MODIFIED: Removed LaTeX formatting from ylabel
-    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
-    # UPDATED: Added _power to the title
-    plt.title(f"UV Slope vs. M_UV (Spectro N={len(df_data)})_power", fontsize=16)
-    
-    # X-axis not inverted, as requested
-    plt.ylim(-5, 3) 
-    plt.grid(alpha=0.2, linestyle='--') 
-    plt.legend(frameon=True, fontsize=10)
-    plt.tight_layout()
-    
-    # UPDATED: Added _power to the output filename
-    plot_path_beta_muv = output_dir / "beta_vs_muv_plot_with_photo_power.png" 
-    plt.savefig(plot_path_beta_muv, dpi=300) 
-    print(f"\nSaved Beta vs M_UV plot with photometric overlay successfully to: {plot_path_beta_muv.resolve()}")
-    
-    # 2. Plot M_UV vs. z (Y error only)
-    plt.figure(figsize=(10, 7))
-    plt.errorbar(df_data['z'], df_data['muv'], 
-                 xerr=z_errs, yerr=df_data['muv_err'],
-                 fmt='o', markersize=MARKER_SIZE, capsize=CAP_SIZE, elinewidth=LINE_WIDTH,
-                 alpha=ALPHA_ERRORS, ecolor=ERROR_BAR_COLOR, 
-                 markerfacecolor='dodgerblue', markeredgecolor='k', markeredgewidth=0.5,
-                 zorder=1)
-    
-    plt.scatter(df_data['z'], df_data['muv'], 
-                s=MARKER_SIZE*5, alpha=ALPHA_POINTS_SPEC, 
-                color='dodgerblue', edgecolors='k', linewidths=0.5, zorder=2)
+    # -- Spectroscopic Data --
+    plt.errorbar(df["muv"], df["beta"],
+                 xerr=df["muv_err"], yerr=df["beta_err"],
+                 fmt="o", color="green", zorder=5, label='This Work (Spec)')
                  
-    plt.xlabel("Redshift (z)", fontsize=14)
-    # MODIFIED: Removed LaTeX formatting from ylabel
-    plt.ylabel("Absolute UV Magnitude (M_UV) [AB mag]", fontsize=14) 
-    # MODIFIED: Removed LaTeX formatting from title
-    plt.title(f"M_UV vs. Redshift (N={len(df_data)})", fontsize=16)
+    plt.xlabel(r"Absolute UV Magnitude ($M_{UV}$)")
+    plt.ylabel(r"UV Spectral Slope ($\beta$)")
+    plt.title(r"UV Spectral Slope ($\beta$) vs $M_{UV}$")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(OUTPUT_DIR/"beta_vs_muv_40.png")
+
+    # PLOT 2: M_UV vs Redshift
+    plt.figure(figsize=(10,7))
+    plt.errorbar(df["z"], df["muv"],
+                 yerr=df["muv_err"],
+                 fmt="o", color="blue")
+    plt.xlabel(r"Redshift ($z$)")
+    plt.ylabel(r"Absolute UV Magnitude ($M_{UV}$)")
     plt.gca().invert_yaxis()
-    plt.grid(alpha=0.2, linestyle='--')
-    plt.tight_layout()
-    plt.savefig(output_dir / "muv_vs_z_plot_improved_v2.png", dpi=300)
-    print(f"Saved MUV vs z plot to: {(output_dir / 'muv_vs_z_plot_improved_v2.png').resolve()}")
+    plt.title(r"$M_{UV}$ vs $z$")
+    plt.grid(True)
+    plt.savefig(OUTPUT_DIR/"muv_vs_z_40.png")
 
-    # 3. Plot Beta vs. z (Y error only)
-    plt.figure(figsize=(10, 7))
-    plt.errorbar(df_data['z'], df_data['beta'], 
-                 xerr=z_errs, yerr=df_data['beta_err'],
-                 fmt='o', markersize=MARKER_SIZE, capsize=CAP_SIZE, elinewidth=LINE_WIDTH,
-                 alpha=ALPHA_ERRORS, ecolor=ERROR_BAR_COLOR, 
-                 markerfacecolor='firebrick', markeredgecolor='k', markeredgewidth=0.5,
-                 zorder=1)
-                 
-    plt.scatter(df_data['z'], df_data['beta'], 
-                s=MARKER_SIZE*5, alpha=ALPHA_POINTS_SPEC, 
-                color='firebrick', edgecolors='k', linewidths=0.5, zorder=2)
-    
-    plt.xlabel("Redshift (z)", fontsize=14)
-    # MODIFIED: Removed LaTeX formatting from ylabel
-    plt.ylabel("UV Continuum Slope (Beta)", fontsize=14)
-    # MODIFIED: Removed LaTeX formatting from title
-    plt.title(f"UV Slope (Beta) vs. Redshift (N={len(df_data)})", fontsize=16)
-    
-    plt.ylim(-3.0, 1.0) 
-    plt.grid(alpha=0.2, linestyle='--')
-    plt.tight_layout()
-    
-    plot_path_beta = output_dir / "beta_vs_z_plot_improved_v2.png"
-    plt.savefig(plot_path_beta, dpi=300)
-    print(f"Saved Beta vs z plot successfully to: {plot_path_beta.resolve()}")
-    
-    # Save the final combined data including errors (using the original filename convention)
-    csv_path_out = output_dir / "muv_beta_z_results_with_errs.csv"
-    df_data.to_csv(csv_path_out, index=False)
-    print(f"MUV and Beta results with errors saved to: {csv_path_out.resolve()}")
+    # PLOT 3: Beta vs Redshift
+    plt.figure(figsize=(10,7))
+    plt.errorbar(df["z"], df["beta"],
+                 yerr=df["beta_err"],
+                 fmt="o", color="red")
+    plt.xlabel(r"Redshift ($z$)")
+    plt.ylabel(r"UV Spectral Slope ($\beta$)")
+    plt.title(r"$\beta$ vs $z$")
+    plt.grid(True)
+    plt.savefig(OUTPUT_DIR/"beta_vs_z_40.png")
 
+    df.to_csv(OUTPUT_DIR/"results_40.csv", index=False)
+    print("Saved results!")
 
-# ----------------------------------------------------------------------
-## CLI EXECUTION
-# ----------------------------------------------------------------------
 
 if __name__ == "__main__":
-    process_and_plot_beta_vs_z(
-        SPECTRA_BASE_DIR, 
-        CSV_PATH_GLOBAL, 
-        OUTPUT_DIR,
-        EXTERNAL_SNR_CSV_PATH
-    )
+    process_and_plot()
