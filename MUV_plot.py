@@ -374,6 +374,48 @@ def process_and_plot():
     df = pd.DataFrame(results)
     print(df)
 
+    def find_full_fits_path(base_dir, filename):
+        """
+        Search recursively within base_dir for the prism file.
+        Returns full path if found, else None.
+        """
+        import os
+        for root, _, files in os.walk(base_dir):
+            if filename in files:
+                return Path(root) / filename
+        return None
+
+    # --- Inspect unusually high β values ---
+    suspicious = df[df["beta"] > -1]
+
+    print("\n=== Galaxies with beta > -1 (suspiciously red UV slopes) ===")
+    print(suspicious[["object_id", "prism_file", "z", "beta", "beta_err", "muv", "muv_err"]])
+
+    print("\nCount:", len(suspicious))
+
+    for row in suspicious.itertuples():
+        print(f"\nInspecting beta windows for object {row.object_id}:")
+        
+        # Locate correct FITS file
+        fpath = find_full_fits_path(SPECTRA_BASE_DIR, row.prism_file)
+        
+        if fpath is None:
+            print("  ERROR — FITS file not found anywhere under Spectra/2D!")
+            continue
+
+        # Load the spectrum
+        wave, flux, err = read_observed_spectrum(fpath)
+        w_rest, f_rest, e_rest = get_rest_frame_spectrum(wave, flux, err, row.z)
+
+        # Count C94 windows
+        waves, fluxes, errs = sample_spectrum_C94(w_rest, f_rest, e_rest)
+
+        print("  UV windows used:", len(waves))
+        print("  Windows:", list(zip(waves, fluxes, errs)))
+
+
+
+
     # ================== PLOTS ======================
     
     # PLOT 1: Beta vs M_UV (with Photometric Background)
