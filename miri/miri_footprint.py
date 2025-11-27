@@ -5,6 +5,26 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+
+# --- Global Matplotlib style for publication-quality plots ---
+mpl.rcParams.update({
+    "font.size": 20,             # Base font size
+    "axes.titlesize": 20,        # Title size
+    "axes.labelsize": 20,        # Axis label size
+    "xtick.labelsize": 16,       # X tick label size
+    "ytick.labelsize": 16,       # Y tick label size
+    "legend.fontsize": 20,       # Legend text
+    "figure.titlesize": 20,      # Overall figure title
+    "axes.linewidth": 1.4,       # Thicker axes
+    "xtick.major.width": 1.2,    # Tick line width
+    "ytick.major.width": 1.2,
+    "xtick.major.size": 6,       # Tick size
+    "ytick.major.size": 6,
+    "lines.linewidth": 1.6,      # Slightly thicker default lines
+    "savefig.dpi": 300,          # High-resolution output for publication
+})
 
 # ----------------------------------------------------
 # INPUT FILES
