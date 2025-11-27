@@ -4,6 +4,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_area
+import matplotlib as mpl
+
+
+
+# --- Global Matplotlib style for publication-quality plots ---
+mpl.rcParams.update({
+    "font.size": 20,             # Base font size
+    "axes.titlesize": 20,        # Title size
+    "axes.labelsize": 20,        # Axis label size
+    "xtick.labelsize": 16,       # X tick label size
+    "ytick.labelsize": 16,       # Y tick label size
+    "legend.fontsize": 20,       # Legend text
+    "figure.titlesize": 20,      # Overall figure title
+    "axes.linewidth": 1.4,       # Thicker axes
+    "xtick.major.width": 1.2,    # Tick line width
+    "ytick.major.width": 1.2,
+    "xtick.major.size": 6,       # Tick size
+    "ytick.major.size": 6,
+    "lines.linewidth": 1.6,      # Slightly thicker default lines
+    "savefig.dpi": 300,          # High-resolution output for publication
+})
 
 
 # --- Paths ---
@@ -238,19 +259,19 @@ plt.vlines(x=-1.5, ymin=0.85, ymax=10, color="blue", linewidth=2)
 
 # Horizontal line: at y = 0.9, going from x = -10 (or far left) up to -1.5
 plt.hlines(y=0.9, xmin=-10, xmax=-1.5, color="blue", linewidth=2)
-plt.text(-3, 2, "Pop III ", color="blue", fontsize=11, fontweight='bold')
-plt.text(-3, 1.05, "Region", color="blue", fontsize=11, fontweight='bold')
+plt.text(-3, 2, "Pop III ", color="blue", fontsize=17, fontweight='bold')
+plt.text(-3, 1.05, "Region", color="blue", fontsize=17, fontweight='bold')
 
 
-plt.xlabel("F560W $-$ F770W [mag]", fontsize=12)
-plt.ylabel("F444W $-$ F560W [mag]", fontsize=12)
-plt.title(f"MIRI Colour–Colour Diagram ({len(plot_df)} Objects)", fontsize=14)
+plt.xlabel("F560W $-$ F770W [mag]")
+plt.ylabel("F444W $-$ F560W [mag]")
+plt.title(f"MIRI Colour–Colour Diagram ({len(plot_df)} Objects)")
 plt.grid(True, linestyle="--", alpha=0.4)
 plt.legend(loc='upper right')
 
 # Reset limits to standard view
-plt.xlim(-3, 10)
-plt.ylim(-3, 10)
+plt.xlim(-3, 2)
+plt.ylim(-2, 8)
 
 plt.savefig("miri_colour_colour_final.png", dpi=300, bbox_inches="tight")
 plt.show()
