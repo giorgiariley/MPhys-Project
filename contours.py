@@ -1,103 +1,142 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-
-fname = "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_C4He2_C3He2.npy"
-contours = np.load(fname, allow_pickle=True)
-
-fig, ax = plt.subplots(figsize=(6, 6))
-
-for i, level_paths in enumerate(contours):
-    for verts in level_paths:
-        xs, ys = verts[:, 0], verts[:, 1]
-        ax.plot(xs, ys, color="lightgrey", lw=0.8, alpha=0.8)
-
-        # label each contour roughly at its centre
-        ax.text(xs.mean(), ys.mean(), str(i), fontsize=6, ha="center", va="center")
-        
-ax.set_xlabel(r"log CIII]$\lambda1908$/He II$\lambda1640$")
-ax.set_ylabel(r"log CIV$\lambda1550$/He II$\lambda1640$")
-ax.set_title("Index map for Rusta contours")
-
-plt.tight_layout()
-fig.savefig("contours_index_map.png", dpi=300)
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-fname = "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_C4He2_C3He2.npy"
-contours = np.load(fname, allow_pickle=True)
-
-# -------------------------------------------------
-# Choose colours for each index 0..39 by hand
-#   Use only these four letters:
-#   'O' = orange, 'G' = green, 'L' = light blue, 'D' = dark blue
-#   Start with a guess – you can change & rerun until it looks right.
-# -------------------------------------------------
-idx_colour_code = [
-    'O','G','L','D','O','G','L','D',   # 0–7
-    'O','G','L','D','O','G','L','D',   # 8–15
-    'O','G','L','D','O','G','L','D',   # 8–15
-    'O','G','L','D','O','G','L','D',   # 8–15
-    'O','G','L','D','O','G','L','D',   # 8–15
-]
-# ^^^ edit these letters as you go:
-# e.g. change some 'O' to 'G','L','D' etc.
-
-# safety check
-assert len(idx_colour_code) == len(contours)
-
-# map letter -> actual colour
-letter_to_colour = {
-    'O': "#f28e2b",  # orange
-    'G': "#59a14f",  # green
-    'L': "#4dc9ff",  # light blue
-    'D': "#1f77b4",  # dark blue
-}
-
-fig, ax = plt.subplots(figsize=(6, 6))
-
-for i, level_paths in enumerate(contours):
-    code = idx_colour_code[i]
-    colour = letter_to_colour[code]
-
-    # optionally vary alpha by level (outer vs inner) using our decode:
-    within    = i % (4 * 2)
-    level_idx = within % 2        # 0 or 1
-    fill_alpha = 0.12 if level_idx == 0 else 0.06
-    line_alpha = 0.8
-
-    for verts in level_paths:
-        xs, ys = verts[:, 0], verts[:, 1]
-
-        # fill
-        ax.fill(xs, ys, facecolor=colour, alpha=fill_alpha,
-                edgecolor="none", zorder=1)
-
-        # outline
-        ax.plot(xs, ys, color=colour, alpha=line_alpha, lw=1.0, zorder=2)
-
-ax.set_xlabel(r"log CIII]$\lambda1908$/He II$\lambda1640$")
-ax.set_ylabel(r"log CIV$\lambda1550$/He II$\lambda1640$")
-ax.set_title(" PopIII / hybrid contours (Rusta et al 25) ")
-
-# --- legend ---
-
-legend_handles = [
-    mpatches.Patch(facecolor=letter_to_colour['O'], edgecolor='none',
-                   label='Self-polluted PopIII'),
-    mpatches.Patch(facecolor=letter_to_colour['G'], edgecolor='none',
-                   label='PopIII-rich Hybrid'),
-    mpatches.Patch(facecolor=letter_to_colour['L'], edgecolor='none',
-                   label='PopIII-mid Hybrid'),
-    mpatches.Patch(facecolor=letter_to_colour['D'], edgecolor='none',
-                   label='PopIII-poor Hybrid'),
-]
-
-ax.legend(handles=legend_handles,
-          loc='upper left',    # tweak position if it overlaps points
-          frameon=False)
+from pathlib import Path
+from typing import Union
 
 
-plt.tight_layout()
-fig.savefig("contours_manual_index_colours.png", dpi=300)
+def plot_popIII_contours(
+    fname: Union[str, Path],
+    out_png: Union[str, Path],
+    xlabel: str,
+    ylabel: str,
+    title: str,
+    add_legend: bool = True,
+    figsize=(6, 6),
+):
+    """
+    Plot Rusta's PopIII / hybrid contours for a single diagnostic plane.
+
+    Uses a repeating per-index colour pattern:
+      O, G, L, D, O, G, L, D, ...
+
+    O = orange  (Self-polluted PopIII)
+    G = green   (PopIII-rich Hybrid)
+    L = light blue / cyan (PopIII-mid Hybrid)
+    D = dark blue         (PopIII-poor Hybrid)
+    """
+
+    fname = Path(fname)
+    contours = np.load(fname, allow_pickle=True)
+    n_indices = len(contours)
+
+    # --- build per-index colour code ---
+    # repeating pattern O, G, L, D
+    pattern = ['O', 'G', 'L', 'D']
+    reps = (n_indices + len(pattern) - 1) // len(pattern)
+    idx_colour_code = (pattern * reps)[:n_indices]
+
+    # map letters to actual colours and legend labels
+    letter_to_colour = {
+        'O': "#f28e2b",  # orange
+        'G': "#b6d63b",  # yellowish green
+        'L': "#76d4e3",  # cyan / light blue
+        'D': "#4a7bd8",  # blue
+    }
+    phase_legend_labels = {
+        'O': "Self-polluted PopIII",
+        'G': "PopIII-rich Hybrid",
+        'L': "PopIII-mid Hybrid",
+        'D': "PopIII-poor Hybrid",
+    }
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for i, level_paths in enumerate(contours):
+        code = idx_colour_code[i]
+        colour = letter_to_colour[code]
+
+        # vary alpha by contour level using index pattern
+        within = i % (4 * 2)   # 4 phases × 2 levels
+        level_idx = within % 2  # 0 or 1
+        fill_alpha = 0.12 if level_idx == 0 else 0.06
+        line_alpha = 0.8
+
+        for verts in level_paths:
+            xs, ys = verts[:, 0], verts[:, 1]
+
+            # filled polygon
+            ax.fill(xs, ys, facecolor=colour, alpha=fill_alpha,
+                    edgecolor="none", zorder=1)
+
+            # outline
+            ax.plot(xs, ys, color=colour, alpha=line_alpha,
+                    lw=1.0, zorder=2)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+
+    if add_legend:
+        legend_handles = [
+            mpatches.Patch(facecolor=letter_to_colour['O'], edgecolor='none',
+                           label=phase_legend_labels['O']),
+            mpatches.Patch(facecolor=letter_to_colour['G'], edgecolor='none',
+                           label=phase_legend_labels['G']),
+            mpatches.Patch(facecolor=letter_to_colour['L'], edgecolor='none',
+                           label=phase_legend_labels['L']),
+            mpatches.Patch(facecolor=letter_to_colour['D'], edgecolor='none',
+                           label=phase_legend_labels['D']),
+        ]
+        ax.legend(handles=legend_handles,
+                  loc='upper left',
+                  frameon=False)
+
+    plt.tight_layout()
+    fig.savefig(out_png, dpi=300)
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+
+    configs = [
+        {
+            "fname": "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_C4He2_C3He2.npy",
+            "xlabel": r"log CIII]$\lambda1908$/He II$\lambda1640$",
+            "ylabel": r"log CIV$\lambda1550$/He II$\lambda1640$",
+            "title": r"PopIII / hybrid contours (C IV/He II vs C III]/He II)",
+            "out": "panel_C4He2_C3He2.png",
+        },
+        {
+            "fname": "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_O3He2_C3He2.npy",
+            "xlabel": r"log CIII]$\lambda1908$/He II$\lambda1640$",
+            "ylabel": r"log O III]$\lambda1663$/He II$\lambda1640$",
+            "title": r"PopIII / hybrid contours (O III]/He II vs C III]/He II)",
+            "out": "panel_O3He2_C3He2.png",
+        },
+        {
+            "fname": "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_C4C3_C3He2.npy",
+            "xlabel": r"log CIII]$\lambda1908$/He II$\lambda1640$",
+            "ylabel": r"log CIV$\lambda1550$/CIII]$\lambda1908$",
+            "title": r"PopIII / hybrid contours (C IV/C III] vs C III]/He II)",
+            "out": "panel_C4C3_C3He2.png",
+        },
+        {
+            "fname": "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_Si3He2_C3He2.npy",
+            "xlabel": r"log CIII]$\lambda1908$/He II$\lambda1640$",
+            "ylabel": r"log S III]$\lambda1883$/He II$\lambda1640$",
+            "title": r"PopIII / hybrid contours (S III]/He II vs C III]/He II)",
+            "out": "panel_S3He2_C3He2.png",
+        },
+    ]
+
+    for cfg in configs:
+        print("Plotting {} -> {}".format(cfg["fname"], cfg["out"]))
+        plot_popIII_contours(
+            fname=cfg["fname"],
+            out_png=cfg["out"],
+            xlabel=cfg["xlabel"],
+            ylabel=cfg["ylabel"],
+            title=cfg["title"],
+            add_legend=True,
+        )
