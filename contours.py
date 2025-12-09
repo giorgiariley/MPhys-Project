@@ -1,69 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from pathlib import Path
 import matplotlib.patches as mpatches
-
-def plot_rusta_contours(ax, fname, color="C0", alpha=0.3, lw=1.0, ls="-", zorder=1):
-    """
-    Plot Rusta's PopIII / hybrid contours stored in a .npy file.
-
-    Parameters
-    ----------
-    ax : matplotlib.axes.Axes
-        Axis on which to draw the contours.
-    fname : str or Path
-        Path to the .npy file, e.g. "contours_C4He2_C3He2.npy".
-    color : str
-        Matplotlib colour for the contour lines.
-    alpha : float
-        Transparency of the lines.
-    lw : float
-        Line width.
-    ls : str
-        Line style.
-    zorder : int
-        Matplotlib z-order.
-    """
-    fname = Path(fname)
-    contours = np.load(fname, allow_pickle=True)
-
-    # `contours` is a nested list/array:
-    #   outer loop over contour levels (e.g. 0.9, 0.3),
-    #   inner loop over individual paths at that level.
-    for level_paths in contours:
-        for vertices in level_paths:
-            xs, ys = vertices[:, 0], vertices[:, 1]
-            ax.plot(xs, ys, color=color, alpha=alpha, lw=lw, ls=ls, zorder=zorder)
-
-
-if __name__ == "__main__":
-    # Example: single panel with one contour file + some dummy data points
-    fig, ax = plt.subplots(figsize=(6, 6))
-
-    # Plot the contours
-    plot_rusta_contours(
-        ax,
-        "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_C4He2_C3He2.npy", 
-        color="tab:blue",
-        alpha=0.5,
-        lw=1.2,
-    )
-
-    # Example: overlay your JADES points if you like
-    # (replace x_data, y_data with your real arrays)
-    # ax.scatter(x_data, y_data, s=20, c="k", marker="o", zorder=5)
-
-    ax.set_xlabel(r"log CIII]$\lambda1908$/He II$\lambda1640$")   # adjust for that file
-    ax.set_ylabel(r"log CIV$\lambda1550$/He II$\lambda1640$")     # adjust for that file
-    ax.set_title("Rusta PopIII / hybrid contours + JADES")
-
-    plt.tight_layout()
-
-    fig.savefig("rusta_contours_example.png", dpi=300)
-
-
-import numpy as np
-import matplotlib.pyplot as plt
 
 fname = "/raid/scratch/work/Griley/GALFIND_WORK/Contours/Rusta_data/contours_C4He2_C3He2.npy"
 contours = np.load(fname, allow_pickle=True)
