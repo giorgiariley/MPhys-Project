@@ -27,26 +27,29 @@ mpl.rcParams.update({
 })
 
 # Input Files
-spec_csv_path = "/nvme/scratch/work/Griley/Masters/mphys_GOODS_S_exposures.csv"
+#spec_csv_path = "/nvme/scratch/work/Griley/Masters/mphys_GOODS_S_exposures.csv" this was for Semester 1
+spec_csv_path = "/nvme/scratch/work/Griley/Masters/all_goods-s.csv" # UPDATED for Semester 2
 
 # UPDATED: List of photometric FITS paths
+# phot_fits_paths = [
+#     "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits",
+#     "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-East/(0.32)as/JADES-DR3-GS-East_MASTER_Sel-F277W+F356W+F444W_v13.fits"
+# ]
 phot_fits_paths = [
-    "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-South/(0.32)as/JADES-DR3-GS-South_MASTER_Sel-F277W+F356W+F444W_v13.fits",
-    "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS-East/(0.32)as/JADES-DR3-GS-East_MASTER_Sel-F277W+F356W+F444W_v13.fits"
+    "/raid/scratch/work/austind/GALFIND_WORK/Catalogues/v13/ACS_WFC+NIRCam/JADES-DR3-GS/(0.32)as/JADES-DR3-GS_MASTER_Sel-F277W+F356W+F444W_v13.fits"
 ]
-
 # NEW: Filtering for GOODS-North photometry
 # Based on your "up to ra 53.175 and dec -27.78" and the plot, we define a box
 # to capture the outlier cluster in the top-left of the plot (high RA, high Dec).
 # (Note: RA axis is inverted, so "up to 53.175" means RA > 53.175 is to the left)
-gn_ra_min = 53.175 # Filter to keep RA values GREATER than this
-gn_dec_min = -27.78 # Filter to keep Dec values GREATER than this
+# gn_ra_min = 53.175 # Filter to keep RA values GREATER than this
+# gn_dec_min = -27.78 # Filter to keep Dec values GREATER than this
 
 # List of CSV files containing the filenames to keep
-filter_csv_files = ["/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/specFitMSA/data/project_mphys_ultrablue/matched_exposures_prism.csv"]
+# filter_csv_files = ["/raid/scratch/work/rroberts/mphys_pop_III/ultrablue-galaxies-mphys/specFitMSA/data/project_mphys_ultrablue/matched_exposures_prism.csv"]
 
 # Output Plot
-output_plot_path = "/nvme/scratch/work/Griley/Masters/footprint_comparison_filtered_GE+GS.png"
+output_plot_path = "/nvme/scratch/work/Griley/Masters/footprint_comparison_AllSouth.png"
 
 # Column names from your prompt
 spec_ra_col = 'ra'
@@ -55,7 +58,7 @@ spec_file_col = 'file' # Column to use for filtering
 
 phot_ra_col = 'ALPHA_J2000'
 phot_dec_col = 'DELTA_J2000'
-photometry_hdu_index = 1
+photometry_hdu_index = 4
 
 # ---------------------- FUNCTIONS ----------------------
 
@@ -84,10 +87,10 @@ def load_valid_filenames(file_list):
 # ---------------------- SCRIPT START ----------------------
 
 # --- Load the set of filenames to keep ---
-valid_filenames = load_valid_filenames(filter_csv_files)
-if not valid_filenames:
-    print("ERROR: No valid filenames loaded from filter CSVs. Cannot proceed.")
-    exit()
+# valid_filenames = load_valid_filenames(filter_csv_files)
+# if not valid_filenames:
+#     print("ERROR: No valid filenames loaded from filter CSVs. Cannot proceed.")
+#     exit()
 
 print(f"\nLoading spectroscopic catalog from: {spec_csv_path}")
 try:
@@ -109,7 +112,7 @@ except KeyError as e:
 # --- Apply the filename filter ---
 print(f"Filtering {len(df_spec)} sources based on filename lists...")
 # Keep rows where the 'file' column value exists in the set loaded from filter CSVs
-df_spec_filtered = df_spec[df_spec[spec_file_col].isin(valid_filenames)].copy()
+df_spec_filtered = df_spec #[df_spec[spec_file_col].isin(valid_filenames)].copy()
 n_filtered = len(df_spec_filtered)
 print(f"Kept {n_filtered} spectroscopic sources after filtering.")
 
@@ -121,7 +124,7 @@ print(f"\nLoading photometric catalogs...")
 all_phot_dfs = []
 try:
     for path in phot_fits_paths:
-        field_name = "GOODS-South" if "GS-South" in path else "GOODS-North"
+        field_name = "GOODS-South" # if "GS" in path #else "GOODS-North"
         print(f"  - Loading {field_name} from {os.path.basename(path)}")
         with fits.open(path) as hdul:
             if photometry_hdu_index >= len(hdul):
@@ -133,11 +136,11 @@ try:
         df_phot_current = df_phot_current.dropna(subset=[phot_ra_col, phot_dec_col])
         print(f"    Loaded {len(df_phot_current)} sources from {field_name}.")
 
-        # Apply spatial filter ONLY to GOODS-North
-        if field_name == "GOODS-North":
-            mask = (df_phot_current[phot_ra_col] <= gn_ra_min) & (df_phot_current[phot_dec_col] <= gn_dec_min)
-            df_phot_current = df_phot_current[mask]
-            print(f"    Filtered {field_name} to {len(df_phot_current)} sources (RA > {gn_ra_min}, Dec > {gn_dec_min}).")
+        # # Apply spatial filter ONLY to GOODS-North
+        # if field_name == "GOODS-North":
+        #     mask = (df_phot_current[phot_ra_col] <= gn_ra_min) & (df_phot_current[phot_dec_col] <= gn_dec_min)
+        #     df_phot_current = df_phot_current[mask]
+        #     print(f"    Filtered {field_name} to {len(df_phot_current)} sources (RA > {gn_ra_min}, Dec > {gn_dec_min}).")
 
         all_phot_dfs.append(df_phot_current)
 
@@ -164,7 +167,7 @@ plt.scatter(
     s=1,  # Small size
     alpha=0.1, # Very transparent
     color='gray', 
-    label=f"Combined Photometric Catalog (n={len(df_phot_combined)})"
+    label=f"Photometric Goods-South Catalog (n={len(df_phot_combined)})"
 )
 
 # Plot your FILTERED spectroscopic sources on top as bright, red points
@@ -174,13 +177,13 @@ plt.scatter(
     s=5, # Slightly larger
     alpha=0.8, 
     color='red', 
-    label=f"Filtered Spectroscopic Sources (n={n_filtered})"
+    label=f" Spectroscopic Sources DJA Goods-South(n={n_filtered})"
 )
 
 # --- Finalize Plot Aesthetics ---
 plt.xlabel("Right Ascension (RA) [deg]")
 plt.ylabel("Declination (Dec) [deg]")
-plt.title("Catalog Footprint Comparison (Filtered Spec vs. Combined GS-S+GS-E)")
+plt.title("Catalog Footprint Comparison ")
 plt.legend()
 plt.grid(True, linestyle='--', alpha=0.5)
 
