@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Union
 import pandas as pd
 from scipy.stats import gaussian_kde
+from matplotlib.lines import Line2D
 
 # --------------------------
 # Gutkin+16 file I/O
@@ -260,11 +261,18 @@ def plot_popIII_contours(
 
     if add_legend:
         legend_handles = [
-            mpatches.Patch(facecolor=letter_to_colour[k], edgecolor="none", label=phase_legend_labels[k])
+            mpatches.Patch(facecolor=letter_to_colour[k], edgecolor="none",
+                        label=phase_legend_labels[k])
             for k in ['O', 'G', 'L', 'D']
         ]
-        ax.legend(handles=legend_handles, loc="upper left", frameon=False)
-    # Match Rusta axis ranges (edit numbers to the exact ones you want)
+
+        # Add contour proxies
+        legend_handles += [
+            Line2D([0], [0], color="#b05ad6", lw=1.5, label="SF galaxies (Gutkin+16)"),
+            Line2D([0], [0], color="#8c7a6b", lw=1.5, label="AGN (Feltre+16)"),
+        ]
+        ax.legend(handles=legend_handles, loc="lower right", frameon=False)
+    # Match Rusta axis ranges 
     ax.set_xlim(-2.6, 1.8)
     ax.set_ylim(-3.1, 2.5)
 
@@ -277,7 +285,6 @@ def plot_popIII_contours(
         plt.close(fig)
 
     return ax
-
 
 
 
