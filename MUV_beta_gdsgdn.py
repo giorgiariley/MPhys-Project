@@ -98,6 +98,46 @@ def get_rest_frame_spectrum(wave_obs_um, flux_obs_uJy, err_obs_uJy, z):
     keep = np.isfinite(lam_rest) & np.isfinite(flam) & np.isfinite(elam) & (elam >= 0)
     return lam_rest[keep], flam[keep], elam[keep]
 
+def mask_spikes_rolling_median(w, f, e, clip_sigma=8.0, window_A = 20.0):
+    """
+    Remove extreme outlier flux bins using a rolling-median continuum estimate.
+    Good for edge spikes / cosmic-ray-like points.
+
+    Parameters
+    ----------
+    w, f, e : np.ndarray
+        Rest-frame wavelength [Å], flux F_lambda, and error.
+    clip_sigma : float
+        Threshold in units of robust sigma (MAD-based).
+    window_A : float
+        Rolling window half-width in Å.
+    """
+    w = np.asarray(w); f = np.asarray(f); e = np.asarray(e)
+    ok = np.isfinite(w) & np.isfinite(f) & np.isfinite(e) & (e >= 0)
+    w, f, e = w[ok], f[ok], e[ok]
+    if len(w) < 20:
+        return w, f, e
+
+    # rolling median continuum
+    f_med = np.empty_like(f)
+    for i in range(len(w)):
+        m = (w >= w[i] - window_A) & (w <= w[i] + window_A)
+        if m.sum() < 5:
+            f_med[i] = np.nanmedian(f)
+        else:
+            f_med[i] = np.nanmedian(f[m])
+
+    resid = f - f_med
+
+    # robust sigma via MAD
+    mad = np.nanmedian(np.abs(resid - np.nanmedian(resid)))
+    if not np.isfinite(mad) or mad == 0:
+        return w, f, e
+
+    sigma_robust = 1.4826 * mad
+    keep = np.abs(resid) < clip_sigma * sigma_robust
+
+    return w[keep], f[keep], e[keep]
 
 #---------------------------------------------------------
 # Compute MUV
@@ -199,6 +239,10 @@ def main():
     # Build a fast lookup from filename -> full path (only once)
     spectra_base = Path(spectra_folder)
     all_fits_paths = {p.name: p for p in spectra_base.rglob("*.fits")}
+    PROBLEM_FILES = {
+        "jades-gds1-v4_prism-clear_1286_52618.spec.fits",
+        "jades-gdn09-v4_prism-clear_1181_78931.spec.fits",
+    }
 
     results = []
     n_missing = 0
@@ -217,6 +261,12 @@ def main():
         try:
             wave, flux, err = read_observed_spectrum(fpath)
             w_rest, f_rest, e_rest = get_rest_frame_spectrum(wave, flux, err, z)
+            if fname in PROBLEM_FILES:
+                w_rest, f_rest, e_rest = mask_spikes_rolling_median(
+                    w_rest, f_rest, e_rest,
+                    clip_sigma=8.0,
+                    window_A=60.0
+                )
 
             MUV, MUV_err = calculate_muv_and_error(w_rest, f_rest, e_rest, z)
             beta, beta_err = calculate_beta_and_error(w_rest, f_rest, e_rest)
