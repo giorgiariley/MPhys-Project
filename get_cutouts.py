@@ -22,9 +22,12 @@ aper_diams = [0.32] * u.arcsec
 forced_phot_band = ["F277W", "F356W", "F444W"]
 min_flux_pc_err = 10.
 
+
+
 # NEW: Path to your CSV file containing the IDs to keep
 filter_id_csv_path = "/nvme/scratch/work/Griley/Masters/exposure_photometry_matches_filtered_South.csv"
-filter_id_column = 'photometry_NUMBER' # The column name in your CSV with the IDs
+filter_id_csv_path = '/nvme/scratch/work/Griley/Masters/subsample_photometric_ids.csv' #NEED TO PUT HERE the path to the new one
+filter_id_column = 'id_phot' # The column name in your CSV with the IDs
 
 # === EAZY fits ===
 SED_fitter_arr = [EAZY({"templates": "fsps_larson", "lowz_zmax": None})]
