@@ -46,7 +46,7 @@ cat["file"] = cat["file"].apply(
 cat["SURVEY"] = cat["SURVEY"].apply(
     lambda x: x.decode().strip() if isinstance(x, bytes) else str(x).strip()
 )
-subsample = cat[cat["file"].isin(qualifying)][["SURVEY", "id_phot", "file"]].copy()
+subsample = cat[cat["file"].isin(qualifying)][["SURVEY", "SURVEY_ID", "id_phot", "file"]].copy()
 subsample = subsample.drop_duplicates().reset_index(drop=True)
 
 print(f"Rows in subsample       : {len(subsample)}")
