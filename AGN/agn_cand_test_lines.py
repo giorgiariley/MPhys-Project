@@ -21,7 +21,7 @@ df['BIC_broad']  = (df['Ha_6565_Ha_6565_2_redchisq'] *
 
 df['delta_BIC'] = df['BIC_broad'] - df['BIC_single']
 
-df['broad_AGN_candidate'] = df['delta_BIC'] < 0
+df['broad_AGN_candidate'] = df['delta_BIC'] < -10
 
 df.to_csv('/nvme/scratch/work/Griley/Masters/AGN/agn_lines_candidates.csv', index=False)
 
@@ -29,4 +29,4 @@ print(df[['file', 'Index', 'delta_BIC', 'Ha_6565_2_fwhm',
           'Ha_6565_2_fwhm_siglo', 'Ha_6565_2_fwhm_sigup', 
           'broad_AGN_candidate']])
 print(f"\nTotal objects: {len(df)}")
-print(f"Broad line AGN candidates (delta_BIC < 0): {df['broad_AGN_candidate'].sum()}")
+print(f"Broad line AGN candidates (delta_BIC < -10): {df['broad_AGN_candidate'].sum()}")
