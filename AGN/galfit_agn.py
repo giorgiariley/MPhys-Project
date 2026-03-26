@@ -64,10 +64,12 @@ for survey in df['SURVEY'].unique():
     psf_survey = psf_survey_map[survey]
     psf_path = f"{PSF_BASE}/{psf_survey}/{filt_name}/empirical/pixscl=0.03as_size=3.0as_galfind.fits"
     psf = PSF_Cutout.from_fits(fits_path=psf_path, filt=filt, unit="adu", pix_scale=0.03 * u.arcsec, size=3.0 * u.arcsec)
-    galfit_psf_fitter = Galfit_Fitter(psf, "psf")
-    galfit_psf_fitter(cat)
+    # galfit_psf_fitter = Galfit_Fitter(psf, "psf")
+    # galfit_psf_fitter(cat)
     # galfit_sersic_fitter = Galfit_Fitter(psf, "sersic")
     # galfit_sersic_fitter(cat)
+    galfit_sersic_fixed_fitter = Galfit_Fitter(psf, "sersic", fixed_params = ["n"])
+    galfit_sersic_fixed_fitter(cat)
 
 
     print(f"Finished PSF fitting for {survey}")
