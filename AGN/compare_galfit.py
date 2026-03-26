@@ -29,6 +29,18 @@ psf_cat = vstack(psf_tables)
 sersic_fixed_cat = vstack(sersic_fixed_tables)
 print(f"Total objects: {len(sersic_cat)}")
 
+
+#looking for my agn candidates by eye
+agn_by_eye= [20964, 25515, 55994, 47644, 55940, 10207, 16707, 20897, 15646]
+for agn_id in agn_by_eye:
+    row_s = sersic_cat[sersic_cat['id'] == str(agn_id)]
+    row_p = psf_cat[psf_cat['id'] == str(agn_id)]
+    if len(row_s) > 0:
+        delta = row_s['red_chi2'][0] - row_p['red_chi2'][0]
+        print(f"ID {agn_id}: n={row_s['n'][0]:.2f}, r_e={row_s['r_e'][0]:.2f}, sersic_red_chi2={row_s['red_chi2'][0]:.3f}, psf_red_chi2={row_p['red_chi2'][0]:.3f}, delta={delta:.3f}")
+    else:
+        print(f"ID {agn_id} not found in sersic catalogue after cuts.")
+
 mask = ((sersic_cat['rff']<=0.5) & (sersic_cat['red_chi2']<=3) & (sersic_cat['r_e'] >= 0.1))
 sersic_cat = sersic_cat[mask]
 psf_cat = psf_cat[mask]
@@ -43,6 +55,8 @@ sersic_combined[replace_mask] = sersic_fixed_cat[replace_mask]
 
 #calculating which fit is better
 delta_chi2 = sersic_combined['red_chi2'] - psf_cat['red_chi2']
+
+
 #plot
 fig,ax = plt.subplots(figsize=(8,6))
 sc = ax.scatter(
