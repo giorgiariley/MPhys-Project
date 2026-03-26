@@ -31,7 +31,7 @@ print(f"Total objects: {len(sersic_cat)}")
 
 
 #looking for my agn candidates by eye
-agn_by_eye= [20964, 25515, 55994, 47644, 55940, 10207, 16707, 20897, 15646]
+agn_by_eye= [20964, 25515, 55994, 47644, 55940, 10207, 16707, 20897, 15646, 23813]
 for agn_id in agn_by_eye:
     row_s = sersic_cat[sersic_cat['id'] == str(agn_id)]
     row_p = psf_cat[psf_cat['id'] == str(agn_id)]
