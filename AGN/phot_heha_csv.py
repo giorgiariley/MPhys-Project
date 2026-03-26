@@ -48,7 +48,7 @@ cat["SURVEY"] = cat["SURVEY"].apply(
 qualifying = set(df["file"].dropna())
 subsample = pd.merge(
     df[["file", "PROG_ID", "Index"]], # Columns to take from the CSV
-    cat[["file", "SURVEY", "SURVEY_ID", "id_phot"]], # Columns to take from FITS
+    cat[["file", "SURVEY", "SURVEY_ID", "id_phot", "ra", "dec"]], # Columns to take from FITS
     on="file", 
     how="inner"
 )
