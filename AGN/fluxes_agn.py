@@ -7,6 +7,10 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from photutils.aperture import SkyCircularAperture, ApertureStats
+import matplotlib.pyplot as plt
+from photutils.centroids import centroid_2dg
+from astropy.nddata import Cutout2D
+
 
 IMAGE_PATHS = {
     "JADES-DR3-GS-South":  "/raid/scratch/data/jwst/JADES-DR3-GS-South/NIRCam/mosaic_1293_wispnathan/30mas/GOODS_S_South-F444W_i2dnobgnobg.fits",
@@ -32,9 +36,18 @@ for survey, group in df.groupby('SURVEY'):
     
     for _, row in group.iterrows():
         coord = SkyCoord(ra=row['ra']*u.deg, dec=row['dec']*u.deg)
+
+        # convert catalogue position to pixel coords
+        x_cat, y_cat = wcs.world_to_pixel(coord)
+        # make a small cutout around the catalogue position for centroiding
+        cutout = Cutout2D(sci, (x_cat, y_cat), size=20, wcs=wcs)
+        # find true centroid
+        x_cen, y_cen = centroid_2dg(cutout.data)
+        # convert centroid back to sky coordinates
+        true_coord = cutout.wcs.pixel_to_world(x_cen, y_cen)
         
-        ap_02 = SkyCircularAperture(coord, r=0.1*u.arcsec)  # 0.2as diameter
-        ap_04 = SkyCircularAperture(coord, r=0.2*u.arcsec)  # 0.4as diameter
+        ap_02 = SkyCircularAperture(true_coord, r=0.1*u.arcsec)  # 0.2as diameter
+        ap_04 = SkyCircularAperture(true_coord, r=0.2*u.arcsec)  # 0.4as diameter
         
         stats_02 = ApertureStats(sci, ap_02, wcs=wcs)
         stats_04 = ApertureStats(sci, ap_04, wcs=wcs)
@@ -54,5 +67,17 @@ for survey, group in df.groupby('SURVEY'):
         })
 
 results_df = pd.DataFrame(results)
-print(results_df[['SURVEY_ID', 'flux_02as', 'flux_04as', 'concentration']].head(20))
 results_df.to_csv('/nvme/scratch/work/Griley/Masters/AGN/concentration.csv', index=False)
+agn_by_eye = [20964, 25515, 55994, 47644, 55940, 10207, 16707, 20897, 15646, 23813 ]
+for agn_id in agn_by_eye:
+    row = results_df[results_df['SURVEY_ID'] == agn_id]
+    if len(row) > 0:
+        print(f"ID {agn_id}: concentration = {row['concentration'].values[0]:.3f}")
+
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.hist(results_df['concentration'], bins=20, color='steelblue', edgecolor='black', alpha=0.7)
+ax.set_xlabel('Concentration (flux 0.2as / flux 0.4as)')
+ax.set_ylabel('N')
+ax.set_title('F444W Concentration')
+plt.tight_layout()
+plt.savefig('/nvme/scratch/work/Griley/Masters/AGN/concentration_hist.png', dpi=150)
