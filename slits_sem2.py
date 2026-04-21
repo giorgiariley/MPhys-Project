@@ -15,10 +15,14 @@ with fits.open(spec_path) as hdul:
     msametid = int(h['MSAMETID'])
     patt_num = int(h['PATT_NUM'])
 
+print(f"MSA Metafile: {msametfl}, MSA Metadata ID: {msametid}, Dither Point Index: {patt_num}")
+
 metafile_path = f"{MSA_METAFILE_BASE}/{msametfl}"
 print(f"Loading MSA metafile: {metafile_path}")
+#load MSA metafile 
 MSA_metafile = msa.MSAMetafile(metafile_path)
 
+#get the slit regions
 slits = MSA_metafile.regions_from_metafile(
     dither_point_index=patt_num,
     as_string=False,
@@ -26,6 +30,7 @@ slits = MSA_metafile.regions_from_metafile(
     msa_metadata_id=msametid,
 )
 
+#load cutout image and WCS
 with fits.open(cutout_path) as hdul:
     image = hdul['SCI'].data
     wcs = WCS(hdul['SCI'].header)
