@@ -114,3 +114,8 @@ def _plot_image_only(image_data, stem):
 FITS_FILE_PATH_EXAMPLE = "/raid/scratch/work/Griley/GALFIND_WORK/Spectra/2D/jades-gds-w04-v4/jades-gds-w04-v4_prism-clear_1212_5497.spec.fits"
 plot_slit_overlay(FITS_FILE_PATH_EXAMPLE, slit_hdu_index=3)
 
+
+with fits.open("/raid/scratch/work/Griley/GALFIND_WORK/Spectra/2D/jades-gds-w04-v4/jades-gds-w04-v4_prism-clear_1212_5497.spec.fits") as hdul:
+    hdul.info()
+    print(hdul['SLITS'].columns.names)
+    print(hdul['SLITS'].data[0])
