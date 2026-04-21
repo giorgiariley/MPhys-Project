@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.wcs import WCS
 
-spec_path = '/raid/scratch/work/austind/GALFIND_WORK/Spectra/2D/gds-deep-v4/gds-deep-v4_prism-clear_1210_13577.spec.fits'
+spec_path = '/raid/scratch/work/austind/GALFIND_WORK/Spectra/2D/jades-gds-wide2-v4/jades-gds-wide2-v4_prism-clear_1180_9564.spec.fits'
 MSA_METAFILE_BASE = '/raid/scratch/work/austind/GALFIND_WORK/Spectra/MSA_metafiles'
-cutout_path = '/raid/scratch/work/Griley/GALFIND_WORK/Cutouts/v13/JADES-DR3-GS-East/ACS_WFC+NIRCam/3.00as/F444W/data/48772.fits'
+cutout_path = '/raid/scratch/work/Griley/GALFIND_WORK/Cutouts/v13/JADES-DR3-GS-East/ACS_WFC+NIRCam/3.00as/F444W/data/31881.fits'
 
 #reading the specfit header
 with fits.open(spec_path) as hdul:
@@ -52,14 +52,14 @@ for s in slits:
         lw = 2.0
     else:
         color = 'lightpink'
-        lw = 2.0
+        lw = 3.0
     
     ax.plot(x_pix, y_pix, color=color, lw=lw, alpha=0.8)
 
 ax.set_xlim(0, image.shape[1])
 ax.set_ylim(0, image.shape[0])
 ax.axis('off')
-ax.set_title('1210_13577 | 48772')
+ax.set_title('1180_9564| 31881')
 plt.tight_layout()
-plt.savefig('/nvme/scratch/work/Griley/Masters/slit_overlays/1210_13577.png', dpi=150)
+plt.savefig('/nvme/scratch/work/Griley/Masters/slit_overlays/1180_9564.png', dpi=150)
 plt.show()
